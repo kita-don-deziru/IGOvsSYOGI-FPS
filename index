@@ -2,366 +2,890 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>囲碁VS将棋 駒撃ちバトル</title>
+<title>3D 囲碁VS将棋 駒撃ちバトルロイヤル</title>
 <style>
   body {
     margin: 0;
-    background: #1a1a1a;
-    color: #fff;
+    overflow: hidden;
+    background: #111;
     font-family: 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
+    color: #fff;
+    user-select: none;
+  }
+
+  /* ロビー・設定画面 */
+  #lobby {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 20, 30, 0.96);
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100vh;
-    overflow: hidden;
+    z-index: 10;
   }
-  canvas {
-    background: #e3c16f; /* 盤面をイメージした木目調カラー */
-    border: 4px solid #5c3a21;
-    box-shadow: 0 0 20px rgba(0,0,0,0.8);
-    cursor: crosshair;
+  .panel {
+    background: #1e2738;
+    padding: 25px 35px;
+    border-radius: 12px;
+    border: 2px solid #d4a359;
+    max-width: 620px;
+    width: 90%;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
   }
-  #ui {
-    margin-top: 10px;
+  .row {
+    margin: 14px 0;
     display: flex;
-    gap: 15px;
+    justify-content: space-between;
     align-items: center;
+    gap: 10px;
   }
-  .btn {
-    padding: 8px 16px;
-    font-size: 16px;
-    font-weight: bold;
-    cursor: pointer;
-    background: #f4d086;
-    border: 2px solid #5c3a21;
-    color: #000;
-    border-radius: 4px;
-  }
-  .btn.active {
-    background: #ff5722;
+  select, input, button {
+    padding: 8px 12px;
+    font-size: 15px;
+    border-radius: 6px;
+    border: 1px solid #d4a359;
+    background: #2c384e;
     color: #fff;
   }
+  select, button { cursor: pointer; }
+  button.start-btn {
+    width: 100%;
+    background: #d4a359;
+    color: #000;
+    font-weight: bold;
+    font-size: 20px;
+    margin-top: 18px;
+    padding: 12px;
+  }
+  button.start-btn:hover { background: #f0c070; }
+
+  /* オンラインID表示エリア */
+  #online-box {
+    background: rgba(0, 0, 0, 0.35);
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: 10px;
+    display: none;
+    border: 1px dashed #80d8ff;
+  }
+
+  /* ゲーム中HUD */
+  #hud { display: none; position: absolute; inset: 0; pointer-events: none; }
+  #scoreboard {
+    position: absolute;
+    top: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.75);
+    padding: 8px 28px;
+    border-radius: 20px;
+    font-size: 20px;
+    font-weight: bold;
+    display: flex;
+    gap: 30px;
+    border: 1px solid #d4a359;
+  }
+  #crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #00ff88;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  #status-bottom {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    right: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .bars {
+    background: rgba(0, 0, 0, 0.65);
+    padding: 12px;
+    border-radius: 8px;
+    width: 260px;
+  }
+  .bar-bg {
+    width: 100%;
+    height: 14px;
+    background: #333;
+    margin-top: 5px;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  #hp-fill { width: 100%; height: 100%; background: #4caf50; transition: width 0.1s; }
+  #shield-fill { width: 100%; height: 100%; background: #2196f3; transition: width 0.1s; }
+
+  #weapon-slots { display: flex; gap: 8px; }
+  .slot {
+    background: rgba(0, 0, 0, 0.75);
+    border: 2px solid #555;
+    padding: 8px 12px;
+    border-radius: 6px;
+    text-align: center;
+    font-size: 14px;
+  }
+  .slot.active {
+    border-color: #ffd54f;
+    background: rgba(212, 163, 89, 0.35);
+  }
+  #ammo-display {
+    font-size: 26px;
+    font-weight: bold;
+    text-align: right;
+    margin-bottom: 5px;
+    text-shadow: 2px 2px 4px #000;
+  }
+  #center-msg {
+    position: absolute;
+    top: 35%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 32px;
+    font-weight: bold;
+    color: #ff5252;
+    text-shadow: 2px 2px 6px #000;
+    text-align: center;
+  }
 </style>
+<!-- 3D描画用 Three.js と オンライン通信用 PeerJS を読み込み -->
+<script src="https://cloudflare.com"></script>
+<script src="https://unpkg.com"></script>
 </head>
 <body>
 
-  <canvas id="gameCanvas" width="800" height="450"></canvas>
-  <div id="ui">
-    <span>【1〜3キー / クリックで駒切替】</span>
-    <button class="btn active" onclick="selectPiece('fu')" id="btn-fu">1: 歩 (連射)</button>
-    <button class="btn" onclick="selectPiece('hisha')" id="btn-hisha">2: 飛車 (高速貫通)</button>
-    <button class="btn" onclick="selectPiece('keima')" id="btn-keima">3: 桂馬 (山なり)</button>
+<!-- ロビー画面 -->
+<div id="lobby">
+  <div class="panel">
+    <h2 style="text-align:center; color:#ffd54f; margin-top:0;">3D 囲碁VS将棋 駒撃ちチーム戦</h2>
+    
+    <div class="row">
+      <span>あなたの陣営（性能は同一）：</span>
+      <select id="sel-team">
+        <option value="shogi">将棋陣営（駒弾＆将棋盤シールド）</option>
+        <option value="igo">囲碁陣営（碁石弾＆囲碁盤シールド）</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <span>対戦モード・人数：</span>
+      <select id="sel-mode" onchange="toggleOnlineBox()">
+        <option value="1">1 vs 1（CPU戦）</option>
+        <option value="3">3 vs 3（CPUチーム戦）</option>
+        <option value="5">5 vs 5（CPU大規模戦）</option>
+        <option value="online">オンライン対戦（1v1〜5v5 P2P通信）</option>
+      </select>
+    </div>
+
+    <!-- オンライン対戦用ルームID入力欄 -->
+    <div id="online-box">
+      <div style="font-size:14px; color:#80d8ff; margin-bottom:8px;">
+        自分のID: <strong id="my-peer-id">取得中...</strong>
+      </div>
+      <div class="row" style="margin:5px 0;">
+        <input type="text" id="join-peer-id" placeholder="相手のIDを入力して接続" style="flex:1;">
+        <button onclick="connectToPeer()">接続する</button>
+      </div>
+      <div id="peer-status" style="font-size:13px; color:#ccc;">待機中（複数人接続可・不足枠はCPU補充可能）</div>
+    </div>
+
+    <div class="row">
+      <span>CPUの強さ（AIレベル）：</span>
+      <select id="sel-ai">
+        <option value="weak">弱い（棒立ち多め・低精度）</option>
+        <option value="normal" selected>中くらい（横移動・盾防御あり）</option>
+        <option value="strong">強い（高精度エイム・盾と撃ち合いの緩急）</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <span>ステージ選択：</span>
+      <select id="sel-stage">
+        <option value="wasteland">荒野（岩場と砂漠）</option>
+        <option value="city">街中（ビル群と大通り）</option>
+        <option value="ruins">ボロ街（崩れた廃墟エリア）</option>
+        <option value="bigroom">大きい部屋の中（巨大和室）</option>
+      </select>
+    </div>
+
+    <p style="font-size:13px; color:#ccc; margin-bottom:0;">
+      操作: WASD移動 / Spaceジャンプ / 左クリック射撃 / 右クリック長押しで盤面ガード / 1〜5で武器切替 / Rでリロード
+    </p>
+    <button class="start-btn" onclick="startGame()">バトル開始！</button>
   </div>
+</div>
+
+<!-- ゲーム中HUD -->
+<div id="hud">
+  <div id="scoreboard">
+    <span style="color:#ffd54f;">将棋: <span id="score-shogi">0</span></span>
+    <span id="timer">03:00</span>
+    <span style="color:#80d8ff;">囲碁: <span id="score-igo">0</span></span>
+  </div>
+  <div id="crosshair"></div>
+  <div id="center-msg"></div>
+
+  <div id="status-bottom">
+    <div class="bars">
+      <div>体力 (HP): <span id="hp-text">100</span></div>
+      <div class="bar-bg"><div id="hp-fill"></div></div>
+      <div style="margin-top:8px;">盤面耐久 (体勢値): <span id="shield-text">100</span></div>
+      <div class="bar-bg"><div id="shield-fill"></div></div>
+    </div>
+
+    <div>
+      <div id="ammo-display">37 / 37</div>
+      <div id="weapon-slots">
+        <div class="slot active" id="slot-0">1: AR (37)</div>
+        <div class="slot" id="slot-1">2: SR (3)</div>
+        <div class="slot" id="slot-2">3: SG (5)</div>
+        <div class="slot" id="slot-3">4: HG (15)</div>
+        <div class="slot" id="slot-4">5: SMG (48)</div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+// ==========================================
+// 1. 武器スペック定義（ご指定の数値に完全準拠）
+// ==========================================
+// 盾の最大耐久値を 100 とし、指定発数で体勢が崩れるように shieldDmg を設定
+const WEAPONS = [
+  { id: 'ar',  name: 'アサルトライフル', mag: 37, auto: true,  fireRate: 110, reloadTime: 1800, dmg: 18, shieldDmg: 100 / 19,       speed: 3.2, spread: 0.02,  pellets: 1 },
+  { id: 'sr',  name: 'スナイパー',       mag: 3,  auto: false, fireRate: 900, reloadTime: 2400, dmg: 85, shieldDmg: 100 / 2,        speed: 5.5, spread: 0.001, pellets: 1 },
+  { id: 'sg',  name: 'ショットガン',     mag: 5,  auto: false, fireRate: 750, reloadTime: 2200, dmg: 12, shieldDmg: (100 / 4) / 8,  speed: 2.6, spread: 0.09,  pellets: 8 },
+  { id: 'hg',  name: 'ピストル',         mag: 15, auto: false, fireRate: 160, reloadTime: 1300, dmg: 22, shieldDmg: 100 / 12,       speed: 3.0, spread: 0.015, pellets: 1 },
+  { id: 'smg', name: 'サブマシンガン',   mag: 48, auto: true,  fireRate: 75,  reloadTime: 1600, dmg: 11, shieldDmg: 100 / 28,       speed: 2.9, spread: 0.045, pellets: 1 }
+];
 
-// ゲーム状態
-let gameOver = false;
-let winner = "";
+// ==========================================
+// 2. PeerJS オンラインP2P通信（1v1〜5v5対応）
+// ==========================================
+let peer = null;
+const connections = {}; // peerId -> DataConnection
+const remoteFighters = {}; // peerId -> Fighterオブジェクト
 
-// プレイヤー（将棋陣営）
-const player = {
-  x: 70,
-  y: canvas.height / 2,
-  radius: 25,
-  hp: 100,
-  maxHp: 100,
-  speed: 5,
-  currentPiece: 'fu',
-  cooldown: 0
-};
+function toggleOnlineBox() {
+  const mode = document.getElementById('sel-mode').value;
+  const box = document.getElementById('online-box');
+  if (mode === 'online') {
+    box.style.display = 'block';
+    initPeer();
+  } else {
+    box.style.display = 'none';
+  }
+}
 
-// 敵（囲碁陣営）
-const enemy = {
-  x: canvas.width - 70,
-  y: canvas.height / 2,
-  radius: 25,
-  hp: 150,
-  maxHp: 150,
-  vy: 3,
-  cooldown: 0,
-  stoneColor: 'black' // 黒石と白石を交互に撃つ
-};
+function initPeer() {
+  if (peer) return;
+  peer = new Peer();
+  peer.on('open', id => {
+    document.getElementById('my-peer-id').innerText = id;
+  });
+  peer.on('connection', conn => {
+    setupConnection(conn);
+  });
+}
 
-// 弾・オブジェクト管理配列
-let bullets = [];
-let barriers = []; // 囲碁陣営の陣地バリア
+function connectToPeer() {
+  const targetId = document.getElementById('join-peer-id').value.trim();
+  if (!targetId || !peer) return;
+  const conn = peer.connect(targetId);
+  setupConnection(conn);
+}
 
-// 入力管理
+function setupConnection(conn) {
+  conn.on('open', () => {
+    connections[conn.peer] = conn;
+    const count = Object.keys(connections).length;
+    document.getElementById('peer-status').innerText = `接続済みプレイヤー数: ${count}人（最大9人まで接続可）`;
+  });
+
+  conn.on('data', data => {
+    if (!isPlaying) return;
+    if (data.type === 'state') {
+      let rf = remoteFighters[conn.peer];
+      if (!rf) {
+        rf = createFighter(data.team, false, 'normal', true);
+        remoteFighters[conn.peer] = rf;
+      }
+      rf.group.position.set(data.x, data.y, data.z);
+      rf.yaw = data.yaw;
+      rf.pitch = data.pitch;
+      rf.isGuarding = data.isGuarding;
+      rf.shieldMesh.visible = data.isGuarding;
+      rf.weaponIdx = data.weaponIdx;
+    } else if (data.type === 'shoot') {
+      const rf = remoteFighters[conn.peer];
+      if (rf) shootWeapon(rf, true);
+    }
+  });
+
+  conn.on('close', () => {
+    if (remoteFighters[conn.peer]) {
+      scene.remove(remoteFighters[conn.peer].group);
+      delete remoteFighters[conn.peer];
+    }
+    delete connections[conn.peer];
+  });
+}
+
+function broadcastData(payload) {
+  for (const id in connections) {
+    if (connections[id].open) connections[id].send(payload);
+  }
+}
+
+// ==========================================
+// 3. Three.js 3D空間＆4種類のステージ構築
+// ==========================================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 40, 160);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+scene.add(ambientLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
+dirLight.position.set(40, 80, 30);
+dirLight.castShadow = true;
+scene.add(dirLight);
+
+const obstacles = [];
+
+function buildStage(type) {
+  obstacles.length = 0;
+
+  let floorColor = 0xc2a370;
+  let skyColor = 0x87ceeb;
+  if (type === 'city') { floorColor = 0x444444; skyColor = 0x607d8b; }
+  if (type === 'ruins') { floorColor = 0x5c5346; skyColor = 0x4e463d; }
+  if (type === 'bigroom') { floorColor = 0x8fa362; skyColor = 0xf5f5dc; } // 畳と和室の天井
+
+  scene.background = new THREE.Color(skyColor);
+  scene.fog = new THREE.Fog(skyColor, 40, 160);
+
+  // 床
+  const floor = new THREE.Mesh(
+    new THREE.BoxGeometry(140, 1, 140),
+    new THREE.MeshStandardMaterial({ color: floorColor })
+  );
+  floor.position.y = -0.5;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // 外周の壁
+  const wallMat = new THREE.MeshStandardMaterial({ color: type === 'bigroom' ? 0xe8e0c8 : 0x333333 });
+  const wallCoords = [
+    [0, 10, -70, 140, 20, 2],
+,
+    [-70, 10, 0, 2, 20, 140],
+    [ 70, 10, 0, 2, 20, 140]
+  ];
+  wallCoords.forEach(w => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w[3], w[4], w[5]), wallMat);
+    mesh.position.set(w[0], w[1], w[2]);
+    scene.add(mesh);
+    obstacles.push(mesh);
+  });
+
+  // ステージ別の遮蔽物配置
+  const count = type === 'bigroom' ? 14 : 24;
+  for (let i = 0; i < count; i++) {
+    let w = 4 + Math.random() * 6;
+    let h = 3 + Math.random() * 8;
+    let d = 4 + Math.random() * 6;
+    let color = 0x8b5a2b;
+
+    if (type === 'wasteland') { h = 2 + Math.random() * 4; color = 0xa87e58; } // 荒野の岩
+    if (type === 'city')      { h = 8 + Math.random() * 14; color = 0x546e7a; } // 街中のビル
+    if (type === 'ruins')     { h = 2 + Math.random() * 6; color = 0x6d4c41; } // ボロ街の廃墟壁
+    if (type === 'bigroom')   { w = 9; h = 3.5; d = 2.5; color = 0xd4a359; }   // 大きい部屋の座卓・衝立
+
+    const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color }));
+    let x = (Math.random() - 0.5) * 110;
+    let z = (Math.random() - 0.5) * 110;
+    if (Math.abs(z) > 45) z *= 0.45; // リスポーン地点付近は開ける
+    box.position.set(x, h / 2, z);
+    box.castShadow = true;
+    box.receiveShadow = true;
+    scene.add(box);
+    obstacles.push(box);
+  }
+}
+
+// ==========================================
+// 4. キャラクター（プレイヤー・CPU・オンライン相手）生成
+// ==========================================
+const entities = [];
+const bullets = [];
+let scores = { shogi: 0, igo: 0 };
+let gameTime = 180; // 3分間（180秒）
+let isPlaying = false;
+let localPlayer = null;
+
+function createFighter(team, isPlayer, aiLevel = 'normal', isRemote = false) {
+  const group = new THREE.Group();
+
+  // 本体（将棋は木駒シルエット、囲碁は立体碁石シルエット・当たり判定は完全同一）
+  const bodyGeo = team === 'shogi'
+    ? new THREE.BoxGeometry(1.4, 2.4, 0.7)
+    : new THREE.CylinderGeometry(1.0, 1.0, 2.2, 24);
+  const bodyMat = new THREE.MeshStandardMaterial({ color: team === 'shogi' ? 0xf4d086 : 0x222222 });
+  const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+  bodyMesh.position.y = 1.2;
+  bodyMesh.castShadow = true;
+  group.add(bodyMesh);
+
+  // 盾（将棋盤 / 囲碁盤）
+  const shieldGeo = new THREE.BoxGeometry(2.3, 2.3, 0.25);
+  const shieldMat = new THREE.MeshStandardMaterial({
+    color: team === 'shogi' ? 0xd4a359 : 0xe0c080,
+    roughness: 0.35
+  });
+  const shieldMesh = new THREE.Mesh(shieldGeo, shieldMat);
+  shieldMesh.position.set(0, 1.3, -1.15);
+  shieldMesh.visible = false;
+  group.add(shieldMesh);
+
+  scene.add(group);
+
+  const fighter = {
+    team, isPlayer, aiLevel, isRemote, group, bodyMesh, shieldMesh,
+    hp: 100, maxHp: 100,
+    shieldHp: 100, maxShieldHp: 100,
+    isGuarding: false,
+    stunTimer: 0, // ガードブレイク（体勢崩し）硬直時間
+    weaponIdx: 0,
+    ammo: WEAPONS.map(w => w.mag),
+    reloading: false,
+    reloadEnd: 0,
+    lastShot: 0,
+    yaw: team === 'shogi' ? 0 : Math.PI,
+    pitch: 0,
+    vy: 0,
+    isGrounded: true,
+    aiMoveDir: new THREE.Vector3(1, 0, 0),
+    aiTimer: 0
+  };
+
+  respawnFighter(fighter);
+  entities.push(fighter);
+  return fighter;
+}
+
+function respawnFighter(f) {
+  f.hp = f.maxHp;
+  f.shieldHp = f.maxShieldHp;
+  f.stunTimer = 0;
+  f.isGuarding = false;
+  f.shieldMesh.visible = false;
+  f.ammo = WEAPONS.map(w => w.mag);
+  f.reloading = false;
+  const zBase = f.team === 'shogi' ? 56 : -56;
+  f.group.position.set((Math.random() - 0.5) * 85, 0, zBase);
+}
+
+// ==========================================
+// 5. 射撃・リロード・HUDメッセージ処理
+// ==========================================
+function triggerReload(f) {
+  if (f.reloading) return;
+  const w = WEAPONS[f.weaponIdx];
+  if (f.ammo[f.weaponIdx] === w.mag) return;
+  f.reloading = true;
+  f.reloadEnd = performance.now() + w.reloadTime;
+  if (f.isPlayer) showMessage("リロード中...", w.reloadTime);
+}
+
+function shootWeapon(f, fromNetwork = false) {
+  const now = performance.now();
+  const w = WEAPONS[f.weaponIdx];
+
+  // 盾で防いでいる間・体勢崩しスタン中・リロード中は撃てない
+  if (f.isGuarding || f.stunTimer > 0 || f.reloading) return;
+
+  // マガジン消費しきったら射撃ボタンで自動リロード
+  if (f.ammo[f.weaponIdx] <= 0) {
+    triggerReload(f);
+    return;
+  }
+
+  if (!fromNetwork && now - f.lastShot < w.fireRate) return;
+  f.lastShot = now;
+  f.ammo[f.weaponIdx]--;
+
+  if (f.isPlayer) {
+    broadcastData({ type: 'shoot' });
+  }
+
+  const dir = new THREE.Vector3(
+    -Math.sin(f.yaw) * Math.cos(f.pitch),
+    Math.sin(f.pitch),
+    -Math.cos(f.yaw) * Math.cos(f.pitch)
+  ).normalize();
+
+  for (let i = 0; i < w.pellets; i++) {
+    const bulletDir = dir.clone();
+    bulletDir.x += (Math.random() - 0.5) * w.spread;
+    bulletDir.y += (Math.random() - 0.5) * w.spread;
+    bulletDir.z += (Math.random() - 0.5) * w.spread;
+    bulletDir.normalize();
+
+    const bGeo = f.team === 'shogi'
+      ? new THREE.BoxGeometry(0.35, 0.45, 0.15)
+      : new THREE.SphereGeometry(0.25, 8, 8);
+    const bMat = new THREE.MeshBasicMaterial({ color: f.team === 'shogi' ? 0xffd54f : 0x00e5ff });
+    const bMesh = new THREE.Mesh(bGeo, bMat);
+    bMesh.position.copy(f.group.position).add(new THREE.Vector3(0, 1.5, 0)).addScaledVector(bulletDir, 1.5);
+    scene.add(bMesh);
+
+    bullets.push({
+      owner: f,
+      team: f.team,
+      mesh: bMesh,
+      vel: bulletDir.multiplyScalar(w.speed),
+      dmg: w.dmg,
+      shieldDmg: w.shieldDmg,
+      life: 65
+    });
+  }
+
+  // 弾を撃ち切ったら自動でリロード開始
+  if (f.ammo[f.weaponIdx] <= 0) {
+    triggerReload(f);
+  }
+}
+
+function showMessage(text, duration = 1200) {
+  const el = document.getElementById('center-msg');
+  el.innerText = text;
+  setTimeout(() => { if (el.innerText === text) el.innerText = ''; }, duration);
+}
+
+// ==========================================
+// 6. キーボード・マウス入力処理
+// ==========================================
 const keys = {};
-let mouse = { x: canvas.width / 2, y: canvas.height / 2, down: false };
+let mouseLeftDown = false;
+let mouseLeftJustPressed = false;
+let mouseRightDown = false;
 
 window.addEventListener('keydown', e => {
-  keys[e.key.toLowerCase()] = true;
-  if (e.key === '1') selectPiece('fu');
-  if (e.key === '2') selectPiece('hisha');
-  if (e.key === '3') selectPiece('keima');
-});
-window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
-
-canvas.addEventListener('mousemove', e => {
-  const rect = canvas.getBoundingClientRect();
-  mouse.x = e.clientX - rect.left;
-  mouse.y = e.clientY - rect.top;
-});
-canvas.addEventListener('mousedown', () => {
-  if (gameOver) resetGame();
-  else mouse.down = true;
-});
-canvas.addEventListener('mouseup', () => mouse.down = false);
-
-function selectPiece(type) {
-  player.currentPiece = type;
-  document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('btn-' + type).classList.add('active');
-}
-
-function resetGame() {
-  player.hp = player.maxHp;
-  enemy.hp = enemy.maxHp;
-  bullets = [];
-  barriers = [];
-  gameOver = false;
-}
-
-// 弾の発射処理（将棋）
-function shootShogi() {
-  const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
-  
-  if (player.currentPiece === 'fu') {
-    bullets.push({
-      team: 'shogi', type: '歩', x: player.x + 20, y: player.y,
-      vx: Math.cos(angle) * 8, vy: Math.sin(angle) * 8,
-      damage: 5, pierce: false, gravity: 0
-    });
-    player.cooldown = 12;
-  } else if (player.currentPiece === 'hisha') {
-    bullets.push({
-      team: 'shogi', type: '飛', x: player.x + 20, y: player.y,
-      vx: Math.cos(angle) * 16, vy: Math.sin(angle) * 16,
-      damage: 15, pierce: true, gravity: 0
-    });
-    player.cooldown = 45;
-  } else if (player.currentPiece === 'keima') {
-    bullets.push({
-      team: 'shogi', type: '桂', x: player.x + 20, y: player.y,
-      vx: Math.cos(angle) * 9, vy: Math.sin(angle) * 9 - 4,
-      damage: 12, pierce: false, gravity: 0.25
-    });
-    player.cooldown = 25;
+  keys[e.code] = true;
+  if (!localPlayer || !isPlaying) return;
+  if (e.code.startsWith('Digit')) {
+    const idx = parseInt(e.code.replace('Digit', '')) - 1;
+    if (idx >= 0 && idx < WEAPONS.length && !localPlayer.reloading) {
+      localPlayer.weaponIdx = idx;
+      updateSlotUI();
+    }
   }
+  if (e.code === 'KeyR') triggerReload(localPlayer);
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+window.addEventListener('mousedown', e => {
+  if (!isPlaying) return;
+  if (document.pointerLockElement !== document.body) {
+    document.body.requestPointerLock();
+    return;
+  }
+  if (e.button === 0) { mouseLeftDown = true; mouseLeftJustPressed = true; }
+  if (e.button === 2) { mouseRightDown = true; }
+});
+window.addEventListener('mouseup', e => {
+  if (e.button === 0) mouseLeftDown = false;
+  if (e.button === 2) mouseRightDown = false;
+});
+window.addEventListener('contextmenu', e => e.preventDefault());
+
+document.addEventListener('mousemove', e => {
+  if (document.pointerLockElement !== document.body || !localPlayer) return;
+  localPlayer.yaw -= e.movementX * 0.0022;
+  localPlayer.pitch -= e.movementY * 0.0022;
+  localPlayer.pitch = Math.max(-1.2, Math.min(1.2, localPlayer.pitch));
+});
+
+function updateSlotUI() {
+  WEAPONS.forEach((w, i) => {
+    document.getElementById(`slot-${i}`).classList.toggle('active', i === localPlayer.weaponIdx);
+  });
 }
 
-// 弾の発射処理（囲碁）
-function shootIgo() {
-  const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x) + (Math.random() - 0.5) * 0.3;
-  
-  // 20%の確率で「陣地バリア」を展開
-  if (Math.random() < 0.2 && barriers.length < 3) {
-    barriers.push({
-      x: enemy.x - 100 - Math.random() * 150,
-      y: 50 + Math.random() * (canvas.height - 100),
-      radius: 35,
-      hp: 25,
-      life: 300
-    });
+// ==========================================
+// 7. バトル開始・タイマー・メインループ
+// ==========================================
+function startGame() {
+  const team = document.getElementById('sel-team').value;
+  const mode = document.getElementById('sel-mode').value;
+  const aiLevel = document.getElementById('sel-ai').value;
+  const stage = document.getElementById('sel-stage').value;
+
+  document.getElementById('lobby').style.display = 'none';
+  document.getElementById('hud').style.display = 'block';
+  document.body.requestPointerLock();
+
+  buildStage(stage);
+
+  // プレイヤー本人の生成
+  localPlayer = createFighter(team, true, aiLevel, false);
+
+  const enemyTeam = team === 'shogi' ? 'igo' : 'shogi';
+
+  if (mode === 'online') {
+    // オンライン接続済みプレイヤー以外の枠をCPUで補充（相手不在時は1v1 CPU補充）
+    const connectedCount = Object.keys(connections).length;
+    if (connectedCount === 0) {
+      createFighter(enemyTeam, false, aiLevel, false);
+    }
   } else {
-    // 通常の碁石ショット
-    bullets.push({
-      team: 'igo', color: enemy.stoneColor, x: enemy.x - 20, y: enemy.y,
-      vx: Math.cos(angle) * 7, vy: Math.sin(angle) * 7,
-      damage: 8, pierce: false, gravity: 0
-    });
-    enemy.stoneColor = enemy.stoneColor === 'black' ? 'white' : 'black';
+    // 1v1 / 3v3 / 5v5 CPU戦の生成
+    const teamSize = parseInt(mode);
+    for (let i = 1; i < teamSize; i++) createFighter(team, false, aiLevel, false);
+    for (let i = 0; i < teamSize; i++) createFighter(enemyTeam, false, aiLevel, false);
   }
-  enemy.cooldown = 30;
+
+  isPlaying = true;
+
+  // 制限時間タイマー（3分間）
+  setInterval(() => {
+    if (!isPlaying) return;
+    gameTime--;
+    const m = String(Math.floor(gameTime / 60)).padStart(2, '0');
+    const s = String(gameTime % 60).padStart(2, '0');
+    document.getElementById('timer').innerText = `m:{s}`;
+    if (gameTime <= 0) {
+      isPlaying = false;
+      document.exitPointerLock();
+      const res = scores.shogi > scores.igo ? "将棋陣営の勝利！" : (scores.igo > scores.shogi ? "囲碁陣営の勝利！" : "引き分け！");
+      alert(`タイムアップ！\n将棋: ${scores.shogi}キル vs 囲碁: ${scores.igo}キル\n結果: ${res}`);
+      location.reload();
+    }
+  }, 1000);
+
+  animate();
 }
 
-// 更新処理
-function update() {
-  if (gameOver) return;
+function animate() {
+  requestAnimationFrame(animate);
+  if (!isPlaying) return;
 
-  // プレイヤー移動
-  if ((keys['w'] || keys['arrowup']) && player.y > player.radius) player.y -= player.speed;
-  if ((keys['s'] || keys['arrowdown']) && player.y < canvas.height - player.radius) player.y += player.speed;
+  const now = performance.now();
 
-  // プレイヤー攻撃
-  if (player.cooldown > 0) player.cooldown--;
-  if (mouse.down && player.cooldown <= 0) shootShogi();
-
-  // 敵（囲碁）のAI移動と攻撃
-  enemy.y += enemy.vy;
-  if (enemy.y < enemy.radius || enemy.y > canvas.height - enemy.radius) enemy.vy *= -1;
-  if (enemy.cooldown > 0) enemy.cooldown--;
-  if (enemy.cooldown <= 0) shootIgo();
-
-  // バリアの寿命管理
-  for (let i = barriers.length - 1; i >= 0; i--) {
-    barriers[i].life--;
-    if (barriers[i].life <= 0 || barriers[i].hp <= 0) barriers.splice(i, 1);
-  }
-
-  // 弾の移動と当たり判定
-  for (let i = bullets.length - 1; i >= 0; i--) {
-    let b = bullets[i];
-    b.vy += b.gravity;
-    b.x += b.vx;
-    b.y += b.vy;
-
-    // 画面外判定
-    if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
-      bullets.splice(i, 1);
-      continue;
+  entities.forEach(f => {
+    // リロード完了処理
+    if (f.reloading && now >= f.reloadEnd) {
+      f.ammo[f.weaponIdx] = WEAPONS[f.weaponIdx].mag;
+      f.reloading = false;
     }
 
-    // 敵へのヒット（将棋の弾）
-    if (b.team === 'shogi') {
-      // バリアとの判定
-      let hitBarrier = false;
-      for (let bar of barriers) {
-        if (Math.hypot(b.x - bar.x, b.y - bar.y) < bar.radius + 10) {
-          bar.hp -= b.damage;
-          hitBarrier = true;
+    // 体勢崩し（ガードブレイク）硬直処理
+    if (f.stunTimer > 0) {
+      f.stunTimer--;
+      f.isGuarding = false;
+      f.shieldMesh.visible = false;
+      f.bodyMesh.rotation.z = 0.45; // よろけ演出
+      return;
+    } else {
+      f.bodyMesh.rotation.z = 0;
+      if (!f.isGuarding && f.shieldHp < f.maxShieldHp) {
+        f.shieldHp = Math.min(f.maxShieldHp, f.shieldHp + 0.12);
+      }
+    }
+
+    if (f.isPlayer) {
+      // --- プレイヤー操作 ---
+      f.isGuarding = mouseRightDown;
+      f.shieldMesh.visible = f.isGuarding;
+
+      const moveSpeed = f.isGuarding ? 0.18 : 0.35;
+      const forward = new THREE.Vector3(-Math.sin(f.yaw), 0, -Math.cos(f.yaw));
+      const right = new THREE.Vector3(Math.cos(f.yaw), 0, -Math.sin(f.yaw));
+
+      if (keys['KeyW']) f.group.position.addScaledVector(forward, moveSpeed);
+      if (keys['KeyS']) f.group.position.addScaledVector(forward, -moveSpeed);
+      if (keys['KeyA']) f.group.position.addScaledVector(right, -moveSpeed);
+      if (keys['KeyD']) f.group.position.addScaledVector(right, moveSpeed);
+
+      if (keys['Space'] && f.isGrounded) { f.vy = 0.42; f.isGrounded = false; }
+
+      // ARとSMGのみ長押し連射可能、それ以外は単発撃ち
+      const w = WEAPONS[f.weaponIdx];
+      if (w.auto ? mouseLeftDown : mouseLeftJustPressed) {
+        shootWeapon(f);
+      }
+      mouseLeftJustPressed = false;
+
+      // オンライン同期送信
+      broadcastData({
+        type: 'state',
+        team: f.team,
+        x: f.group.position.x,
+        y: f.group.position.y,
+        z: f.group.position.z,
+        yaw: f.yaw,
+        pitch: f.pitch,
+        isGuarding: f.isGuarding,
+        weaponIdx: f.weaponIdx
+      });
+
+    } else if (!f.isRemote) {
+      // --- CPU AIロジック（弱・中・強） ---
+      let nearest = null;
+      let minDist = Infinity;
+      entities.forEach(other => {
+        if (other.team !== f.team) {
+          const d = f.group.position.distanceTo(other.group.position);
+          if (d < minDist) { minDist = d; nearest = other; }
+        }
+      });
+
+      if (nearest) {
+        const toTarget = new THREE.Vector3().subVectors(nearest.group.position, f.group.position);
+        const targetYaw = Math.atan2(-toTarget.x, -toTarget.z);
+        const aimLerp = f.aiLevel === 'weak' ? 0.03 : (f.aiLevel === 'normal' ? 0.08 : 0.22);
+        f.yaw += (targetYaw - f.yaw) * aimLerp;
+
+        // 距離に応じた武器の自動持ち替え（強いAIのみ）
+        if (f.aiLevel === 'strong' && Math.random() < 0.01) {
+          if (minDist > 45) f.weaponIdx = 1;      // 遠距離はスナイパー
+          else if (minDist < 15) f.weaponIdx = 2; // 近距離はショットガン
+          else f.weaponIdx = 0;                   // 中距離はアサルトライフル
+        }
+
+        // 移動AI
+        f.aiTimer--;
+        if (f.aiTimer <= 0) {
+          f.aiTimer = 35 + Math.random() * 55;
+          const strafe = f.aiLevel === 'weak' ? 0.15 : 1.0;
+          f.aiMoveDir.set((Math.random() - 0.5) * strafe, 0, minDist > 25 ? -0.5 : 0.3)
+            .applyAxisAngle(new THREE.Vector3(0, 1, 0), f.yaw);
+        }
+        f.group.position.addScaledVector(f.aiMoveDir, f.aiLevel === 'strong' ? 0.28 : 0.18);
+
+        // 盾防御AI
+        if (f.aiLevel !== 'weak' && f.shieldHp > 40 && Math.random() < (f.aiLevel === 'strong' ? 0.025 : 0.008)) {
+          f.isGuarding = true;
+          setTimeout(() => { f.isGuarding = false; }, 1100);
+        }
+        f.shieldMesh.visible = f.isGuarding;
+
+        // 射撃AI
+        if (!f.isGuarding && minDist < 80 && Math.random() < (f.aiLevel === 'weak' ? 0.05 : 0.16)) {
+          shootWeapon(f);
+        }
+      }
+    }
+
+    // 重力・着地・マップ端制限
+    f.vy -= 0.02;
+    f.group.position.y += f.vy;
+    if (f.group.position.y <= 0) { f.group.position.y = 0; f.vy = 0; f.isGrounded = true; }
+    f.group.position.x = Math.max(-66, Math.min(66, f.group.position.x));
+    f.group.position.z = Math.max(-66, Math.min(66, f.group.position.z));
+    f.group.rotation.y = f.yaw;
+  });
+
+  // TPSカメラ追従とHUD更新
+  if (localPlayer) {
+    const camOffset = new THREE.Vector3(0.8, 2.6, 5.2);
+    camOffset.applyAxisAngle(new THREE.Vector3(1, 0, 0), localPlayer.pitch);
+    camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), localPlayer.yaw);
+    camera.position.copy(localPlayer.group.position).add(camOffset);
+
+    const lookAtPos = localPlayer.group.position.clone().add(new THREE.Vector3(
+      -Math.sin(localPlayer.yaw) * 15,
+      Math.sin(localPlayer.pitch) * 15 + 1.8,
+      -Math.cos(localPlayer.yaw) * 15
+    ));
+    camera.lookAt(lookAtPos);
+
+    document.getElementById('hp-text').innerText = Math.ceil(localPlayer.hp);
+    document.getElementById('hp-fill').style.width = `${(localPlayer.hp / localPlayer.maxHp) * 100}%`;
+    document.getElementById('shield-text').innerText = Math.ceil(localPlayer.shieldHp);
+    document.getElementById('shield-fill').style.width = `${(localPlayer.shieldHp / localPlayer.maxShieldHp) * 100}%`;
+    const w = WEAPONS[localPlayer.weaponIdx];
+    document.getElementById('ammo-display').innerText = localPlayer.reloading
+      ? "RELOADING..."
+      : `${localPlayer.ammo[localPlayer.weaponIdx]} / ${w.mag}`;
+  }
+
+  // 弾丸の移動と当たり判定
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.mesh.position.add(b.vel);
+    b.life--;
+
+    let hit = false;
+    for (const obs of obstacles) {
+      const box = new THREE.Box3().setFromObject(obs);
+      if (box.containsPoint(b.mesh.position)) { hit = true; break; }
+    }
+
+    if (!hit) {
+      for (const target of entities) {
+        if (target.team === b.team) continue;
+        const targetCenter = target.group.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+        if (b.mesh.position.distanceTo(targetCenter) < 1.5) {
+          hit = true;
+
+          if (target.isGuarding) {
+            // 盾で防いでいる場合：武器ごとの蓄積ダメージを加算
+            target.shieldHp -= b.shieldDmg;
+            if (target.shieldHp <= 0) {
+              // 規定発数に達して体勢崩し（ガードブレイク）発生！
+              target.shieldHp = 0;
+              target.isGuarding = false;
+              target.shieldMesh.visible = false;
+              target.stunTimer = 110; // 約1.8秒間行動不能
+              if (target.isPlayer) showMessage("体勢を崩された！！（ガードブレイク）", 1800);
+              if (b.owner.isPlayer) showMessage("相手の体勢を崩した！", 1200);
+            }
+          } else {
+            // 生身ヒット時のHPダメージ＆撃破リスポーン処理
+            target.hp -= b.dmg;
+            if (target.hp <= 0) {
+              scores[b.team]++;
+              document.getElementById(`score-${b.team}`).innerText = scores[b.team];
+              if (b.owner.isPlayer) showMessage("撃破！ +1 KILL", 1000);
+              if (target.isPlayer) showMessage("倒された！リスポーンします...", 1500);
+              respawnFighter(target);
+            }
+          }
           break;
         }
       }
-      if (hitBarrier && !b.pierce) {
-        bullets.splice(i, 1);
-        continue;
-      }
-
-      // 敵本体との判定
-      if (Math.hypot(b.x - enemy.x, b.y - enemy.y) < enemy.radius + 10) {
-        enemy.hp -= b.damage;
-        if (!b.pierce) bullets.splice(i, 1);
-        if (enemy.hp <= 0) { gameOver = true; winner = "将棋陣営の勝利！"; }
-      }
-    } 
-    // プレイヤーへのヒット（囲碁の弾）
-    else if (b.team === 'igo') {
-      if (Math.hypot(b.x - player.x, b.y - player.y) < player.radius + 8) {
-        player.hp -= b.damage;
-        bullets.splice(i, 1);
-        if (player.hp <= 0) { gameOver = true; winner = "囲碁陣営の勝利！"; }
-      }
     }
-  }
-}
 
-// 描画処理
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // 盤面のグリッド線
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
-  ctx.lineWidth = 1;
-  for (let x = 0; x < canvas.width; x += 40) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-  }
-  for (let y = 0; y < canvas.height; y += 40) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-  }
-
-  // 囲碁陣営のバリア（陣地）描画
-  for (let bar of barriers) {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-    ctx.beginPath();
-    ctx.arc(bar.x, bar.y, bar.radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#000';
-    ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('陣地', bar.x, bar.y + 4);
-  }
-
-  // プレイヤー（将棋砲台）描画
-  ctx.fillStyle = '#f4d086';
-  ctx.beginPath();
-  ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#5c3a21';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.fillStyle = '#000';
-  ctx.font = 'bold 20px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('王', player.x, player.y + 7);
-
-  // 敵（囲碁砲台）描画
-  ctx.fillStyle = '#222';
-  ctx.beginPath();
-  ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.fillText('碁', enemy.x, enemy.y + 7);
-
-  // 弾の描画
-  for (let b of bullets) {
-    if (b.team === 'shogi') {
-      // 将棋の駒（五角形風の簡易表現）
-      ctx.fillStyle = '#f4d086';
-      ctx.fillRect(b.x - 10, b.y - 12, 20, 24);
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(b.x - 10, b.y - 12, 20, 24);
-      ctx.fillStyle = '#000';
-      ctx.font = 'bold 14px sans-serif';
-      ctx.fillText(b.type, b.x, b.y + 5);
-    } else {
-      // 碁石（黒または白の円）
-      ctx.fillStyle = b.color === 'black' ? '#111' : '#f9f9f9';
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 9, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#555';
-      ctx.stroke();
+    if (hit || b.life <= 0) {
+      scene.remove(b.mesh);
+      bullets.splice(i, 1);
     }
   }
 
-  // HPバー描画
-  drawHpBar(20, 20, player.hp, player.maxHp, '将棋陣営 HP');
-  drawHpBar(canvas.width - 220, 20, enemy.hp, enemy.maxHp, '囲碁陣営 HP');
-
-  // ゲームオーバー画面
-  if (gameOver) {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 40px sans-serif';
-    ctx.fillText(winner, canvas.width / 2, canvas.height / 2 - 10);
-    ctx.font = '20px sans-serif';
-    ctx.fillText('画面クリックで再戦', canvas.width / 2, canvas.height / 2 + 35);
-  }
+  renderer.render(scene, camera);
 }
 
-function drawHpBar(x, y, hp, maxHp, label) {
-  ctx.fillStyle = '#333';
-  ctx.fillRect(x, y, 200, 20);
-  ctx.fillStyle = hp > maxHp * 0.3 ? '#4caf50' : '#f44336';
-  ctx.fillRect(x, y, 200 * Math.max(0, hp / maxHp), 20);
-  ctx.strokeStyle = '#fff';
-  ctx.strokeRect(x, y, 200, 20);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 12px sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText(`${label}: ${Math.max(0, hp)}`, x + 5, y + 14);
-}
-
-// メインループ
-function loop() {
-  update();
-  draw();
-  requestAnimationFrame(loop);
-}
-loop();
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
 </script>
 </body>
 </html>
+
+
