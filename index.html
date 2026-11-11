@@ -392,7 +392,7 @@ function buildStage(type) {
     [0, 10, -70, 140, 20, 2],
 ,
     [-70, 10, 0, 2, 20, 140],
-    [ 70, 10, 0, 2, 20, 140]
+    [70, 10, 0, 2, 20, 140]
   ];
   wallCoords.forEach(w => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w[3], w[4], w[5]), wallMat);
@@ -400,6 +400,7 @@ function buildStage(type) {
     scene.add(mesh);
     obstacles.push(mesh);
   });
+
 
   // ステージ別の遮蔽物配置
   const count = type === 'bigroom' ? 14 : 24;
