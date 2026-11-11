@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>囲碁VS将棋 駒撃ちバトル</title>
+<style>
+  body {
+    margin: 0;
+    background: #1a1a1a;
+    color: #fff;
+    font-family: 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+  }
+  canvas {
+    background: #e3c16f; /* 盤面をイメージした木目調カラー */
+    border: 4px solid #5c3a21;
+    box-shadow: 0 0 20px rgba(0,0,0,0.8);
+    cursor: crosshair;
+  }
+  #ui {
+    margin-top: 10px;
+    display: flex;
+    gap: 15px;
+    align-items: center;
+  }
+  .btn {
+    padding: 8px 16px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    background: #f4d086;
+    border: 2px solid #5c3a21;
+    color: #000;
+    border-radius: 4px;
+  }
+  .btn.active {
+    background: #ff5722;
+    color: #fff;
+  }
+</style>
+</head>
+<body>
+
+  <canvas id="gameCanvas" width="800" height="450"></canvas>
+  <div id="ui">
+    <span>【1〜3キー / クリックで駒切替】</span>
+    <button class="btn active" onclick="selectPiece('fu')" id="btn-fu">1: 歩 (連射)</button>
+    <button class="btn" onclick="selectPiece('hisha')" id="btn-hisha">2: 飛車 (高速貫通)</button>
+    <button class="btn" onclick="selectPiece('keima')" id="btn-keima">3: 桂馬 (山なり)</button>
+  </div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// ゲーム状態
+let gameOver = false;
+let winner = "";
+
+// プレイヤー（将棋陣営）
+const player = {
+  x: 70,
+  y: canvas.height / 2,
+  radius: 25,
+  hp: 100,
+  maxHp: 100,
+  speed: 5,
+  currentPiece: 'fu',
+  cooldown: 0
+};
+
+// 敵（囲碁陣営）
+const enemy = {
+  x: canvas.width - 70,
+  y: canvas.height / 2,
+  radius: 25,
+  hp: 150,
+  maxHp: 150,
+  vy: 3,
+  cooldown: 0,
+  stoneColor: 'black' // 黒石と白石を交互に撃つ
+};
+
+// 弾・オブジェクト管理配列
+let bullets = [];
+let barriers = []; // 囲碁陣営の陣地バリア
+
+// 入力管理
+const keys = {};
+let mouse = { x: canvas.width / 2, y: canvas.height / 2, down: false };
+
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === '1') selectPiece('fu');
+  if (e.key === '2') selectPiece('hisha');
+  if (e.key === '3') selectPiece('keima');
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - rect.left;
+  mouse.y = e.clientY - rect.top;
+});
+canvas.addEventListener('mousedown', () => {
+  if (gameOver) resetGame();
+  else mouse.down = true;
+});
+canvas.addEventListener('mouseup', () => mouse.down = false);
+
+function selectPiece(type) {
+  player.currentPiece = type;
+  document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + type).classList.add('active');
+}
+
+function resetGame() {
+  player.hp = player.maxHp;
+  enemy.hp = enemy.maxHp;
+  bullets = [];
+  barriers = [];
+  gameOver = false;
+}
+
+// 弾の発射処理（将棋）
+function shootShogi() {
+  const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  
+  if (player.currentPiece === 'fu') {
+    bullets.push({
+      team: 'shogi', type: '歩', x: player.x + 20, y: player.y,
+      vx: Math.cos(angle) * 8, vy: Math.sin(angle) * 8,
+      damage: 5, pierce: false, gravity: 0
+    });
+    player.cooldown = 12;
+  } else if (player.currentPiece === 'hisha') {
+    bullets.push({
+      team: 'shogi', type: '飛', x: player.x + 20, y: player.y,
+      vx: Math.cos(angle) * 16, vy: Math.sin(angle) * 16,
+      damage: 15, pierce: true, gravity: 0
+    });
+    player.cooldown = 45;
+  } else if (player.currentPiece === 'keima') {
+    bullets.push({
+      team: 'shogi', type: '桂', x: player.x + 20, y: player.y,
+      vx: Math.cos(angle) * 9, vy: Math.sin(angle) * 9 - 4,
+      damage: 12, pierce: false, gravity: 0.25
+    });
+    player.cooldown = 25;
+  }
+}
+
+// 弾の発射処理（囲碁）
+function shootIgo() {
+  const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x) + (Math.random() - 0.5) * 0.3;
+  
+  // 20%の確率で「陣地バリア」を展開
+  if (Math.random() < 0.2 && barriers.length < 3) {
+    barriers.push({
+      x: enemy.x - 100 - Math.random() * 150,
+      y: 50 + Math.random() * (canvas.height - 100),
+      radius: 35,
+      hp: 25,
+      life: 300
+    });
+  } else {
+    // 通常の碁石ショット
+    bullets.push({
+      team: 'igo', color: enemy.stoneColor, x: enemy.x - 20, y: enemy.y,
+      vx: Math.cos(angle) * 7, vy: Math.sin(angle) * 7,
+      damage: 8, pierce: false, gravity: 0
+    });
+    enemy.stoneColor = enemy.stoneColor === 'black' ? 'white' : 'black';
+  }
+  enemy.cooldown = 30;
+}
+
+// 更新処理
+function update() {
+  if (gameOver) return;
+
+  // プレイヤー移動
+  if ((keys['w'] || keys['arrowup']) && player.y > player.radius) player.y -= player.speed;
+  if ((keys['s'] || keys['arrowdown']) && player.y < canvas.height - player.radius) player.y += player.speed;
+
+  // プレイヤー攻撃
+  if (player.cooldown > 0) player.cooldown--;
+  if (mouse.down && player.cooldown <= 0) shootShogi();
+
+  // 敵（囲碁）のAI移動と攻撃
+  enemy.y += enemy.vy;
+  if (enemy.y < enemy.radius || enemy.y > canvas.height - enemy.radius) enemy.vy *= -1;
+  if (enemy.cooldown > 0) enemy.cooldown--;
+  if (enemy.cooldown <= 0) shootIgo();
+
+  // バリアの寿命管理
+  for (let i = barriers.length - 1; i >= 0; i--) {
+    barriers[i].life--;
+    if (barriers[i].life <= 0 || barriers[i].hp <= 0) barriers.splice(i, 1);
+  }
+
+  // 弾の移動と当たり判定
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    let b = bullets[i];
+    b.vy += b.gravity;
+    b.x += b.vx;
+    b.y += b.vy;
+
+    // 画面外判定
+    if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+      bullets.splice(i, 1);
+      continue;
+    }
+
+    // 敵へのヒット（将棋の弾）
+    if (b.team === 'shogi') {
+      // バリアとの判定
+      let hitBarrier = false;
+      for (let bar of barriers) {
+        if (Math.hypot(b.x - bar.x, b.y - bar.y) < bar.radius + 10) {
+          bar.hp -= b.damage;
+          hitBarrier = true;
+          break;
+        }
+      }
+      if (hitBarrier && !b.pierce) {
+        bullets.splice(i, 1);
+        continue;
+      }
+
+      // 敵本体との判定
+      if (Math.hypot(b.x - enemy.x, b.y - enemy.y) < enemy.radius + 10) {
+        enemy.hp -= b.damage;
+        if (!b.pierce) bullets.splice(i, 1);
+        if (enemy.hp <= 0) { gameOver = true; winner = "将棋陣営の勝利！"; }
+      }
+    } 
+    // プレイヤーへのヒット（囲碁の弾）
+    else if (b.team === 'igo') {
+      if (Math.hypot(b.x - player.x, b.y - player.y) < player.radius + 8) {
+        player.hp -= b.damage;
+        bullets.splice(i, 1);
+        if (player.hp <= 0) { gameOver = true; winner = "囲碁陣営の勝利！"; }
+      }
+    }
+  }
+}
+
+// 描画処理
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 盤面のグリッド線
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < canvas.width; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = 0; y < canvas.height; y += 40) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+
+  // 囲碁陣営のバリア（陣地）描画
+  for (let bar of barriers) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.beginPath();
+    ctx.arc(bar.x, bar.y, bar.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('陣地', bar.x, bar.y + 4);
+  }
+
+  // プレイヤー（将棋砲台）描画
+  ctx.fillStyle = '#f4d086';
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#5c3a21';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('王', player.x, player.y + 7);
+
+  // 敵（囲碁砲台）描画
+  ctx.fillStyle = '#222';
+  ctx.beginPath();
+  ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.fillText('碁', enemy.x, enemy.y + 7);
+
+  // 弾の描画
+  for (let b of bullets) {
+    if (b.team === 'shogi') {
+      // 将棋の駒（五角形風の簡易表現）
+      ctx.fillStyle = '#f4d086';
+      ctx.fillRect(b.x - 10, b.y - 12, 20, 24);
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(b.x - 10, b.y - 12, 20, 24);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText(b.type, b.x, b.y + 5);
+    } else {
+      // 碁石（黒または白の円）
+      ctx.fillStyle = b.color === 'black' ? '#111' : '#f9f9f9';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#555';
+      ctx.stroke();
+    }
+  }
+
+  // HPバー描画
+  drawHpBar(20, 20, player.hp, player.maxHp, '将棋陣営 HP');
+  drawHpBar(canvas.width - 220, 20, enemy.hp, enemy.maxHp, '囲碁陣営 HP');
+
+  // ゲームオーバー画面
+  if (gameOver) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 40px sans-serif';
+    ctx.fillText(winner, canvas.width / 2, canvas.height / 2 - 10);
+    ctx.font = '20px sans-serif';
+    ctx.fillText('画面クリックで再戦', canvas.width / 2, canvas.height / 2 + 35);
+  }
+}
+
+function drawHpBar(x, y, hp, maxHp, label) {
+  ctx.fillStyle = '#333';
+  ctx.fillRect(x, y, 200, 20);
+  ctx.fillStyle = hp > maxHp * 0.3 ? '#4caf50' : '#f44336';
+  ctx.fillRect(x, y, 200 * Math.max(0, hp / maxHp), 20);
+  ctx.strokeStyle = '#fff';
+  ctx.strokeRect(x, y, 200, 20);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${label}: ${Math.max(0, hp)}`, x + 5, y + 14);
+}
+
+// メインループ
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
