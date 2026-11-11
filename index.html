@@ -386,20 +386,28 @@ function buildStage(type) {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // 外周の壁
+  // 外周の壁（4方向を個別に生成）
   const wallMat = new THREE.MeshStandardMaterial({ color: type === 'bigroom' ? 0xe8e0c8 : 0x333333 });
-  const wallCoords = [
-    [0, 10, -70, 140, 20, 2],
-,
-    [-70, 10, 0, 2, 20, 140],
-    [70, 10, 0, 2, 20, 140]
-  ];
-  wallCoords.forEach(w => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w[3], w[4], w[5]), wallMat);
-    mesh.position.set(w[0], w[1], w[2]);
-    scene.add(mesh);
-    obstacles.push(mesh);
-  });
+
+  const wallNorth = new THREE.Mesh(new THREE.BoxGeometry(140, 20, 2), wallMat);
+  wallNorth.position.set(0, 10, -70);
+  scene.add(wallNorth);
+  obstacles.push(wallNorth);
+
+  const wallSouth = new THREE.Mesh(new THREE.BoxGeometry(140, 20, 2), wallMat);
+  wallSouth.position.set(0, 10, 70);
+  scene.add(wallSouth);
+  obstacles.push(wallSouth);
+
+  const wallWest = new THREE.Mesh(new THREE.BoxGeometry(2, 20, 140), wallMat);
+  wallWest.position.set(-70, 10, 0);
+  scene.add(wallWest);
+  obstacles.push(wallWest);
+
+  const wallEast = new THREE.Mesh(new THREE.BoxGeometry(2, 20, 140), wallMat);
+  wallEast.position.set(70, 10, 0);
+  scene.add(wallEast);
+  obstacles.push(wallEast);
 
 
   // ステージ別の遮蔽物配置
