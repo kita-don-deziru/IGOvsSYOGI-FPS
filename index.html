@@ -240,10 +240,19 @@
       </select>
     </div>
 
+    <div class="row">
+      <span>操作スタイル：</span>
+      <select id="sel-control">
+        <option value="easy" selected>🔰 かんたん操作（Q射撃 / E盾 / 矢印キー視点 / オートエイム）</option>
+        <option value="fps">🎯 本格マウス操作（画面クリックで視点ロック）</option>
+      </select>
+    </div>
+
     <div id="model-load-status">3Dモデル（models/*.fbx）を確認中...</div>
 
+
     <p style="font-size:12px; color:#ccc; margin:10px 0 0 0;">
-      操作: WASD移動 / Spaceジャンプ / 左クリック射撃 / 右クリック長押しで盤面ガード / 1〜5で武器切替 / Rでリロード
+      かんたん操作: WASD移動 / ←→キー（またはドラッグ）で視点回転 / <strong>Qキー（またはSpace）で射撃</strong> / E・Shiftで盾ガード / Cでジャンプ / Rでリロード
     </p>
     <button class="start-btn" onclick="startGame()">バトル開始！</button>
   </div>
@@ -963,8 +972,12 @@ const keys = {};
 let mouseLeftDown = false;
 let mouseLeftJustPressed = false;
 let mouseRightDown = false;
+let qKeyJustPressed = false;
 
 window.addEventListener('keydown', e => {
+  if (e.code === 'KeyQ' && !keys['KeyQ']) {
+    qKeyJustPressed = true;
+  }
   keys[e.code] = true;
   if (!localPlayer || !isPlaying) return;
   if (e.code.startsWith('Digit')) {
@@ -979,25 +992,52 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
 
+let controlMode = 'easy';
+let isDraggingView = false;
+let lastMouseX = 0;
+let lastMouseY = 0;
+
 window.addEventListener('mousedown', e => {
   if (!isPlaying) return;
-  if (document.pointerLockElement !== document.body) {
-    document.body.requestPointerLock();
-    return;
+  if (controlMode === 'fps') {
+    if (document.pointerLockElement !== document.body) {
+      document.body.requestPointerLock();
+      return;
+    }
+    if (e.button === 0) { mouseLeftDown = true; mouseLeftJustPressed = true; }
+    if (e.button === 2) { mouseRightDown = true; }
+  } else {
+    if (e.button === 0) {
+      mouseLeftDown = true;
+      mouseLeftJustPressed = true;
+      isDraggingView = true;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+    }
+    if (e.button === 2) { mouseRightDown = true; }
   }
-  if (e.button === 0) { mouseLeftDown = true; mouseLeftJustPressed = true; }
-  if (e.button === 2) { mouseRightDown = true; }
 });
 window.addEventListener('mouseup', e => {
-  if (e.button === 0) mouseLeftDown = false;
+  if (e.button === 0) { mouseLeftDown = false; isDraggingView = false; }
   if (e.button === 2) mouseRightDown = false;
 });
 window.addEventListener('contextmenu', e => e.preventDefault());
 
+
 document.addEventListener('mousemove', e => {
-  if (document.pointerLockElement !== document.body || !localPlayer) return;
-  localPlayer.yaw -= e.movementX * 0.0022;
-  localPlayer.pitch -= e.movementY * 0.0022;
+  if (!localPlayer || !isPlaying) return;
+  if (controlMode === 'fps') {
+    if (document.pointerLockElement !== document.body) return;
+    localPlayer.yaw -= e.movementX * 0.0022;
+    localPlayer.pitch -= e.movementY * 0.0022;
+  } else if (isDraggingView) {
+    const dx = e.clientX - lastMouseX;
+    const dy = e.clientY - lastMouseY;
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+    localPlayer.yaw -= dx * 0.005;
+    localPlayer.pitch -= dy * 0.004;
+  }
   localPlayer.pitch = Math.max(-1.2, Math.min(1.2, localPlayer.pitch));
 });
 
@@ -1059,10 +1099,14 @@ function startGame() {
   const mode = document.getElementById('sel-mode').value;
   const aiLevel = document.getElementById('sel-ai').value;
   const stage = document.getElementById('sel-stage').value;
+  controlMode = document.getElementById('sel-control').value;
+
 
   document.getElementById('lobby').style.display = 'none';
   document.getElementById('hud').style.display = 'block';
-  document.body.requestPointerLock();
+  if (controlMode === 'fps') {
+    document.body.requestPointerLock();
+  }
 
   buildStage(stage);
 
@@ -1216,25 +1260,69 @@ function animate() {
     }
 
     if (f.isPlayer) {
-      f.isGuarding = mouseRightDown;
+      f.isGuarding = mouseRightDown || (controlMode === 'easy' && (keys['KeyE'] || keys['ShiftLeft'] || keys['ShiftRight']));
       f.shieldMesh.visible = f.isGuarding;
+
+
+      // かんたん操作：矢印キー（← → ↑ ↓）でカメラ視点回転
+      if (controlMode === 'easy') {
+        if (keys['ArrowLeft'])  f.yaw += 0.045;
+        if (keys['ArrowRight']) f.yaw -= 0.045;
+        if (keys['ArrowUp'])    f.pitch = Math.min(0.8, f.pitch + 0.03);
+        if (keys['ArrowDown'])  f.pitch = Math.max(-0.8, f.pitch - 0.03);
+      }
+
 
       const moveSpeed = f.isGuarding ? 0.18 : 0.35;
       const forward = new THREE.Vector3(-Math.sin(f.yaw), 0, -Math.cos(f.yaw));
       const right = new THREE.Vector3(Math.cos(f.yaw), 0, -Math.sin(f.yaw));
+
 
       if (keys['KeyW']) f.group.position.addScaledVector(forward, moveSpeed);
       if (keys['KeyS']) f.group.position.addScaledVector(forward, -moveSpeed);
       if (keys['KeyA']) f.group.position.addScaledVector(right, -moveSpeed);
       if (keys['KeyD']) f.group.position.addScaledVector(right, moveSpeed);
 
-      if (keys['Space'] && f.isGrounded) { f.vy = 0.42; f.isGrounded = false; }
+
+      // ジャンプ（かんたん操作はCキー、本格FPSはSpace）
+      const wantJump = (controlMode === 'easy') ? keys['KeyC'] : keys['Space'];
+      if (wantJump && f.isGrounded) { f.vy = 0.42; f.isGrounded = false; }
+
+
+      // Qキー・Space・左クリックのいずれかで射撃
+      const wantShoot = mouseLeftDown || (controlMode === 'easy' && (keys['KeyQ'] || keys['Space']));
+
+
+      // かんたん操作時のオートエイム補助（射撃中に近くの敵へ自動で向きを合わせる）
+      if (controlMode === 'easy' && wantShoot) {
+        let closestEnemy = null;
+        let closestDist = 65;
+        entities.forEach(other => {
+          if (other.team !== f.team) {
+            const d = f.group.position.distanceTo(other.group.position);
+            if (d < closestDist) { closestDist = d; closestEnemy = other; }
+          }
+        });
+        if (closestEnemy) {
+          const toEnemy = new THREE.Vector3().subVectors(closestEnemy.group.position, f.group.position);
+          const targetYaw = Math.atan2(-toEnemy.x, -toEnemy.z);
+          let diff = targetYaw - f.yaw;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          if (Math.abs(diff) < 0.75) {
+            f.yaw += diff * 0.18;
+          }
+        }
+      }
+
 
       const w = WEAPONS[f.weaponIdx];
-      if (w.auto ? mouseLeftDown : mouseLeftJustPressed) {
+      if (w.auto ? wantShoot : (mouseLeftJustPressed || qKeyJustPressed || (controlMode === 'easy' && keys['Space']))) {
         shootWeapon(f);
       }
       mouseLeftJustPressed = false;
+      qKeyJustPressed = false;
+
 
       broadcastData({
         type: 'state',
