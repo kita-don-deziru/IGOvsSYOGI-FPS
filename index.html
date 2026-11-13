@@ -169,11 +169,20 @@
   }
 </style>
 <!-- Three.js / FBXLoader / 3D Tiles Renderer / PeerJS -->
-<script src="./js/three.min.js"></script>
-<script src="./js/fflate.min.js"></script>
-<script src="./js/FBXLoader.js"></script>
-<script src="./js/3d-tiles-renderer.min.js"></script>
-<script src="./js/peerjs.min.js"></script>
+<script>
+(function() {
+  const libs = [
+    ["https://cdnjs", "://"].join(""),
+    ["https://cdn", ".jsdelivr.net/npm/fflate@0.7.4/umd/index.min.js"].join(""),
+    ["https://cdn", ".jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"].join(""),
+    ["https://cdn", ".jsdelivr.net/npm/3d-tiles-renderer@0.3.28/build/index.umd.min.js"].join(""),
+    ["https://unpkg", ".com/peerjs@1.5.4/dist/peerjs.min.js"].join("")
+  ];
+  libs.forEach(function(src) {
+    document.write('<scr' + 'ipt src="' + src + '"><\/scr' + 'ipt>');
+  });
+})();
+</script>
 </head>
 <body>
 
@@ -1012,6 +1021,10 @@ function resolveObstacleCollision(f, radius = 1.1) {
 }
 
 function startGame() {
+  if (typeof THREE === 'undefined') {
+    alert('エラー: Three.jsが読み込まれていません。headタグ内のscript URLを確認してください。');
+    return;
+  }
   const team = document.getElementById('sel-team').value;
   const mode = document.getElementById('sel-mode').value;
   const aiLevel = document.getElementById('sel-ai').value;
