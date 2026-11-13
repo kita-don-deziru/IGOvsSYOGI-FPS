@@ -698,6 +698,33 @@ function createShogiTexture(kanji) {
   return new THREE.CanvasTexture(c);
 }
 
+// 飛んでいく弾丸用の立体五角形「将棋駒」メッシュを生成
+const shogiBulletTextures = ['歩', '飛', '角', '金', '銀', '桂', '香'].map(k => createShogiTexture(k));
+const shogiBulletShape = new THREE.Shape();
+shogiBulletShape.moveTo(0, 0.28);       // 先端（とがった頭）
+shogiBulletShape.lineTo(-0.20, 0.12);   // 左肩
+shogiBulletShape.lineTo(-0.24, -0.26);  // 左下
+shogiBulletShape.lineTo(0.24, -0.26);   // 右下
+shogiBulletShape.lineTo(0.20, 0.12);    // 右肩
+shogiBulletShape.closePath();
+
+const shogiBulletGeo = new THREE.ExtrudeGeometry(shogiBulletShape, {
+  depth: 0.10,
+  bevelEnabled: true,
+  bevelThickness: 0.02,
+  bevelSize: 0.02,
+  bevelSegments: 1
+});
+shogiBulletGeo.center();
+
+function createShogiBulletMesh() {
+  const tex = shogiBulletTextures[Math.floor(Math.random() * shogiBulletTextures.length)];
+  const faceMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.4 });
+  const sideMat = new THREE.MeshStandardMaterial({ color: 0xdba958, roughness: 0.5 });
+  const mesh = new THREE.Mesh(shogiBulletGeo, [faceMat, sideMat]);
+  return mesh;
+}
+
 const entities = [];
 const bullets = [];
 let scores = { shogi: 0, igo: 0 };
@@ -896,11 +923,14 @@ function shootWeapon(f, fromNetwork = false) {
     bulletDir.z += (Math.random() - 0.5) * w.spread;
     bulletDir.normalize();
 
-    const bGeo = f.team === 'shogi'
-      ? new THREE.BoxGeometry(0.35, 0.45, 0.15)
-      : new THREE.SphereGeometry(0.25, 8, 8);
-    const bMat = new THREE.MeshBasicMaterial({ color: f.team === 'shogi' ? 0xffd54f : 0x00e5ff });
-    const bMesh = new THREE.Mesh(bGeo, bMat);
+    let bMesh;
+    if (f.team === 'shogi') {
+      bMesh = createShogiBulletMesh();
+    } else {
+      const bGeo = new THREE.SphereGeometry(0.22, 12, 12);
+      const bMat = new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0x00e5ff, emissiveIntensity: 0.35 });
+      bMesh = new THREE.Mesh(bGeo, bMat);
+    }
     bMesh.position.copy(f.group.position).add(new THREE.Vector3(0, 1.5, 0)).addScaledVector(bulletDir, 1.6);
     scene.add(bMesh);
 
