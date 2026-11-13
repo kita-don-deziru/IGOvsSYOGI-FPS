@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>3D 囲碁VS将棋 駒撃ちバトルロイヤル</title>
+<title>3D 囲碁VS将棋 駒撃ちバトルロイヤル（PLATEAU都市対応）</title>
 <style>
   body {
     margin: 0;
@@ -29,12 +29,12 @@
     padding: 25px 35px;
     border-radius: 12px;
     border: 2px solid #d4a359;
-    max-width: 620px;
+    max-width: 640px;
     width: 90%;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
   }
   .row {
-    margin: 14px 0;
+    margin: 12px 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -55,19 +55,28 @@
     color: #000;
     font-weight: bold;
     font-size: 20px;
-    margin-top: 18px;
+    margin-top: 16px;
     padding: 12px;
   }
   button.start-btn:hover { background: #f0c070; }
 
-  /* オンラインID表示エリア */
   #online-box {
     background: rgba(0, 0, 0, 0.35);
     padding: 12px;
     border-radius: 8px;
-    margin-top: 10px;
+    margin-top: 8px;
     display: none;
     border: 1px dashed #80d8ff;
+  }
+
+  #model-load-status {
+    font-size: 12px;
+    color: #a3cb38;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 6px 10px;
+    border-radius: 6px;
+    margin-top: 10px;
+    text-align: center;
   }
 
   /* ゲーム中HUD */
@@ -90,11 +99,16 @@
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     border: 2px solid #00ff88;
     border-radius: 50%;
     transform: translate(-50%, -50%);
+    transition: transform 0.06s, border-color 0.06s;
+  }
+  #crosshair.hit {
+    border-color: #ff3f3f;
+    transform: translate(-50%, -50%) scale(1.45);
   }
   #status-bottom {
     position: absolute;
@@ -154,9 +168,12 @@
     text-align: center;
   }
 </style>
-<!-- 3D描画用 Three.js と オンライン通信用 PeerJS を読み込み -->
-<script src="https://cloudflare.com"></script>
-<script src="https://unpkg.com"></script>
+<!-- Three.js / FBXLoader / 3D Tiles Renderer / PeerJS -->
+<script src="./js/three.min.js"></script>
+<script src="./js/fflate.min.js"></script>
+<script src="./js/FBXLoader.js"></script>
+<script src="./js/3d-tiles-renderer.min.js"></script>
+<script src="./js/peerjs.min.js"></script>
 </head>
 <body>
 
@@ -183,7 +200,6 @@
       </select>
     </div>
 
-    <!-- オンライン対戦用ルームID入力欄 -->
     <div id="online-box">
       <div style="font-size:14px; color:#80d8ff; margin-bottom:8px;">
         自分のID: <strong id="my-peer-id">取得中...</strong>
@@ -207,14 +223,17 @@
     <div class="row">
       <span>ステージ選択：</span>
       <select id="sel-stage">
-        <option value="wasteland">荒野（岩場と砂漠）</option>
-        <option value="city">街中（ビル群と大通り）</option>
-        <option value="ruins">ボロ街（崩れた廃墟エリア）</option>
-        <option value="bigroom">大きい部屋の中（巨大和室）</option>
+        <option value="plateau">🏙️ リアル都市（古賀市 PLATEAU 3Dマップ）</option>
+        <option value="wasteland">🏜️ 荒野（岩場と砂漠）</option>
+        <option value="city">🏢 街中（ビル群と大通り）</option>
+        <option value="ruins">🏚️ ボロ街（崩れた廃墟エリア）</option>
+        <option value="bigroom">🏯 大きい部屋の中（巨大和室）</option>
       </select>
     </div>
 
-    <p style="font-size:13px; color:#ccc; margin-bottom:0;">
+    <div id="model-load-status">3Dモデル（models/*.fbx）を確認中...</div>
+
+    <p style="font-size:12px; color:#ccc; margin:10px 0 0 0;">
       操作: WASD移動 / Spaceジャンプ / 左クリック射撃 / 右クリック長押しで盤面ガード / 1〜5で武器切替 / Rでリロード
     </p>
     <button class="start-btn" onclick="startGame()">バトル開始！</button>
@@ -251,26 +270,162 @@
     </div>
   </div>
 </div>
-
 <script>
 // ==========================================
-// 1. 武器スペック定義（ご指定の数値に完全準拠）
+// 0. Web Audio API 効果音エンジン
 // ==========================================
-// 盾の最大耐久値を 100 とし、指定発数で体勢が崩れるように shieldDmg を設定
+let audioCtx = null;
+function playGunSound(type) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    if (type === 'sr') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(520, now);
+      osc.frequency.exponentialRampToValueAtTime(55, now + 0.25);
+      gain.gain.setValueAtTime(0.28, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.26);
+    } else if (type === 'sg') {
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(240, now);
+      osc.frequency.exponentialRampToValueAtTime(42, now + 0.2);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.21);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.21);
+    } else if (type === 'guard') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(980, now);
+      osc.frequency.exponentialRampToValueAtTime(620, now + 0.08);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.09);
+    } else if (type === 'break') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(1400, now);
+      osc.frequency.exponentialRampToValueAtTime(160, now + 0.35);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.36);
+    } else {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(380, now);
+      osc.frequency.exponentialRampToValueAtTime(85, now + 0.09);
+      gain.gain.setValueAtTime(0.16, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.1);
+    }
+  } catch (e) {}
+}
+
+function flashCrosshair() {
+  const ch = document.getElementById('crosshair');
+  if (!ch) return;
+  ch.classList.add('hit');
+  setTimeout(() => ch.classList.remove('hit'), 90);
+}
+
+// ==========================================
+// 1. 武器スペック定義 ＆ GitHub Pages用 FBXモデル自動ロード
+// ==========================================
 const WEAPONS = [
-  { id: 'ar',  name: 'アサルトライフル', mag: 37, auto: true,  fireRate: 110, reloadTime: 1800, dmg: 18, shieldDmg: 100 / 19,       speed: 3.2, spread: 0.02,  pellets: 1 },
-  { id: 'sr',  name: 'スナイパー',       mag: 3,  auto: false, fireRate: 900, reloadTime: 2400, dmg: 85, shieldDmg: 100 / 2,        speed: 5.5, spread: 0.001, pellets: 1 },
-  { id: 'sg',  name: 'ショットガン',     mag: 5,  auto: false, fireRate: 750, reloadTime: 2200, dmg: 12, shieldDmg: (100 / 4) / 8,  speed: 2.6, spread: 0.09,  pellets: 8 },
-  { id: 'hg',  name: 'ピストル',         mag: 15, auto: false, fireRate: 160, reloadTime: 1300, dmg: 22, shieldDmg: 100 / 12,       speed: 3.0, spread: 0.015, pellets: 1 },
-  { id: 'smg', name: 'サブマシンガン',   mag: 48, auto: true,  fireRate: 75,  reloadTime: 1600, dmg: 11, shieldDmg: 100 / 28,       speed: 2.9, spread: 0.045, pellets: 1 }
+  { id: 'ar',  name: 'アサルトライフル', mag: 37, auto: true,  fireRate: 110, reloadTime: 1800, dmg: 18, shieldDmg: 100 / 19,      speed: 3.2, spread: 0.02,  pellets: 1, gunColor: 0x333333, barrelLen: 1.3 },
+  { id: 'sr',  name: 'スナイパー',       mag: 3,  auto: false, fireRate: 900, reloadTime: 2400, dmg: 85, shieldDmg: 100 / 2,       speed: 5.5, spread: 0.001, pellets: 1, gunColor: 0x2e4a36, barrelLen: 2.0 },
+  { id: 'sg',  name: 'ショットガン',     mag: 5,  auto: false, fireRate: 750, reloadTime: 2200, dmg: 12, shieldDmg: (100 / 4) / 8, speed: 2.6, spread: 0.09,  pellets: 8, gunColor: 0x5d4037, barrelLen: 1.1 },
+  { id: 'hg',  name: 'ピストル',         mag: 15, auto: false, fireRate: 160, reloadTime: 1300, dmg: 22, shieldDmg: 100 / 12,      speed: 3.0, spread: 0.015, pellets: 1, gunColor: 0x78909c, barrelLen: 0.6 },
+  { id: 'smg', name: 'サブマシンガン',   mag: 48, auto: true,  fireRate: 75,  reloadTime: 1600, dmg: 11, shieldDmg: 100 / 28,      speed: 2.9, spread: 0.045, pellets: 1, gunColor: 0x212121, barrelLen: 0.9 }
 ];
+
+const loadedFBXAssets = {}; // 'ar', 'sr', 'sg', 'hg', 'smg', 'man' を格納
+
+function preloadGitHubFBXModels() {
+  const statusEl = document.getElementById('model-load-status');
+  if (typeof THREE.FBXLoader === 'undefined') {
+    if (statusEl) statusEl.textContent = '3Dモデル：標準プリミティブモデルを使用します';
+    return;
+  }
+  const loader = new THREE.FBXLoader();
+  const targets = [
+    { key: 'ar',  path: './models/ar.fbx',  targetSize: 1.45 },
+    { key: 'sr',  path: './models/sr.fbx',  targetSize: 1.95 },
+    { key: 'sg',  path: './models/sg.fbx',  targetSize: 1.35 },
+    { key: 'hg',  path: './models/hg.fbx',  targetSize: 0.75 },
+    { key: 'smg', path: './models/smg.fbx', targetSize: 1.15 },
+    { key: 'man', path: './models/man.fbx', targetSize: 2.35 }
+  ];
+
+  let loadedCount = 0;
+  let finishedCount = 0;
+
+  targets.forEach(item => {
+    loader.load(
+      item.path,
+      (obj) => {
+        const box = new THREE.Box3().setFromObject(obj);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        const scale = item.targetSize / maxDim;
+        obj.scale.set(scale, scale, scale);
+
+        const scaledBox = new THREE.Box3().setFromObject(obj);
+        const center = new THREE.Vector3();
+        scaledBox.getCenter(center);
+        obj.position.x -= center.x;
+        obj.position.z -= center.z;
+        if (item.key === 'man') {
+          obj.position.y -= scaledBox.min.y;
+        } else {
+          obj.position.y -= center.y;
+        }
+
+        obj.traverse(child => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            if (!child.material) {
+              child.material = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.5, roughness: 0.4 });
+            }
+          }
+        });
+
+        loadedFBXAssets[item.key] = obj;
+        if (item.key === 'man') {
+          window.manFBXAnimations = obj.animations || [];
+        }
+        loadedCount++;
+        finishedCount++;
+        if (statusEl) {
+          statusEl.textContent = '✅ 3Dモデル読込済み (' + loadedCount + '/' + targets.length + '個) ※未配置は標準モデルで自動補完';
+        }
+      },
+      undefined,
+      () => {
+        finishedCount++;
+        if (finishedCount === targets.length && loadedCount === 0 && statusEl) {
+          statusEl.textContent = '3Dモデル：標準モデルで動作中（models/*.fbx を配置すると自動で切り替わります）';
+        }
+      }
+    );
+  });
+}
+window.addEventListener('DOMContentLoaded', preloadGitHubFBXModels);
 
 // ==========================================
 // 2. PeerJS オンラインP2P通信（1v1〜5v5対応）
 // ==========================================
 let peer = null;
-const connections = {}; // peerId -> DataConnection
-const remoteFighters = {}; // peerId -> Fighterオブジェクト
+const connections = {};
+const remoteFighters = {};
 
 function toggleOnlineBox() {
   const mode = document.getElementById('sel-mode').value;
@@ -321,10 +476,43 @@ function setupConnection(conn) {
       rf.pitch = data.pitch;
       rf.isGuarding = data.isGuarding;
       rf.shieldMesh.visible = data.isGuarding;
-      rf.weaponIdx = data.weaponIdx;
+      if (rf.weaponIdx !== data.weaponIdx) {
+        rf.weaponIdx = data.weaponIdx;
+        updateFighterGunModel(rf);
+      }
     } else if (data.type === 'shoot') {
       const rf = remoteFighters[conn.peer];
       if (rf) shootWeapon(rf, true);
+    } else if (data.type === 'hit' && localPlayer) {
+      // 相手から自分が撃たれた通知を受信
+      if (localPlayer.isGuarding) {
+        localPlayer.shieldHp -= data.shieldDmg;
+        playGunSound('guard');
+        if (localPlayer.shieldHp <= 0) {
+          localPlayer.shieldHp = 0;
+          localPlayer.isGuarding = false;
+          localPlayer.shieldMesh.visible = false;
+          localPlayer.stunTimer = 110;
+          playGunSound('break');
+          showMessage("体勢を崩された！！（ガードブレイク）", 1800);
+        }
+      } else {
+        localPlayer.hp -= data.dmg;
+        if (localPlayer.hp <= 0) {
+          scores[data.attackerTeam]++;
+          document.getElementById('score-' + data.attackerTeam).innerText = scores[data.attackerTeam];
+          showMessage("倒された！リスポーンします...", 1500);
+          broadcastData({ type: 'kill', killerTeam: data.attackerTeam });
+          respawnFighter(localPlayer);
+        }
+      }
+    } else if (data.type === 'kill') {
+      // 相手が倒された通知を受信してスコアを同期
+      scores[data.killerTeam]++;
+      document.getElementById('score-' + data.killerTeam).innerText = scores[data.killerTeam];
+      if (data.killerTeam === localPlayer.team) {
+        showMessage("オンライン撃破！ +1 KILL", 1200);
+      }
     }
   });
 
@@ -344,11 +532,11 @@ function broadcastData(payload) {
 }
 
 // ==========================================
-// 3. Three.js 3D空間＆4種類のステージ構築
+// 3. Three.js 3D空間＆ステージ構築（PLATEAU 古賀市 3D Tiles対応）
 // ==========================================
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
-scene.fog = new THREE.Fog(0x87ceeb, 40, 160);
+scene.fog = new THREE.Fog(0x87ceeb, 45, 180);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -356,7 +544,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.72);
 scene.add(ambientLight);
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
 dirLight.position.set(40, 80, 30);
@@ -364,20 +552,23 @@ dirLight.castShadow = true;
 scene.add(dirLight);
 
 const obstacles = [];
+const obstacleBoxes = [];
+let plateauTilesRenderer = null;
 
 function buildStage(type) {
   obstacles.length = 0;
+  obstacleBoxes.length = 0;
 
   let floorColor = 0xc2a370;
   let skyColor = 0x87ceeb;
-  if (type === 'city') { floorColor = 0x444444; skyColor = 0x607d8b; }
-  if (type === 'ruins') { floorColor = 0x5c5346; skyColor = 0x4e463d; }
-  if (type === 'bigroom') { floorColor = 0x8fa362; skyColor = 0xf5f5dc; } // 畳と和室の天井
+  if (type === 'plateau') { floorColor = 0x3a3f45; skyColor = 0x74b9ff; }
+  if (type === 'city')    { floorColor = 0x444444; skyColor = 0x607d8b; }
+  if (type === 'ruins')   { floorColor = 0x5c5346; skyColor = 0x4e463d; }
+  if (type === 'bigroom') { floorColor = 0x8fa362; skyColor = 0xf5f5dc; }
 
   scene.background = new THREE.Color(skyColor);
-  scene.fog = new THREE.Fog(skyColor, 40, 160);
+  scene.fog = new THREE.Fog(skyColor, 45, 180);
 
-  // 床
   const floor = new THREE.Mesh(
     new THREE.BoxGeometry(140, 1, 140),
     new THREE.MeshStandardMaterial({ color: floorColor })
@@ -386,31 +577,71 @@ function buildStage(type) {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // 外周の壁（4方向を個別に生成）
-  const wallMat = new THREE.MeshStandardMaterial({ color: type === 'bigroom' ? 0xe8e0c8 : 0x333333 });
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: type === 'bigroom' ? 0xe8e0c8 : 0x222222,
+    transparent: type === 'plateau',
+    opacity: type === 'plateau' ? 0.35 : 1.0
+  });
+  const walls = [
+    { w: 140, h: 20, d: 2, x: 0, y: 10, z: -70 },
+    { w: 140, h: 20, d: 2, x: 0, y: 10, z: 70 },
+    { w: 2, h: 20, d: 140, x: -70, y: 10, z: 0 },
+    { w: 2, h: 20, d: 140, x: 70, y: 10, z: 0 }
+  ];
+  walls.forEach(cfg => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(cfg.w, cfg.h, cfg.d), wallMat);
+    m.position.set(cfg.x, cfg.y, cfg.z);
+    scene.add(m);
+    obstacles.push(m);
+    obstacleBoxes.push(new THREE.Box3().setFromObject(m));
+  });
 
-  const wallNorth = new THREE.Mesh(new THREE.BoxGeometry(140, 20, 2), wallMat);
-  wallNorth.position.set(0, 10, -70);
-  scene.add(wallNorth);
-  obstacles.push(wallNorth);
+  // 🏙️ 国土交通省 PLATEAU（福岡県古賀市 3D都市モデル）の読み込み
+  if (type === 'plateau' && typeof window.TilesRenderer !== 'undefined') {
+    const tilesUrl = 'https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/40223-bldg-lod1-texture-latest/tileset.json';
+    plateauTilesRenderer = new window.TilesRenderer.TilesRenderer(tilesUrl);
+    plateauTilesRenderer.setCamera(camera);
+    plateauTilesRenderer.setResolutionFromRenderer(camera, renderer);
 
-  const wallSouth = new THREE.Mesh(new THREE.BoxGeometry(140, 20, 2), wallMat);
-  wallSouth.position.set(0, 10, 70);
-  scene.add(wallSouth);
-  obstacles.push(wallSouth);
+    const cityPivot = new THREE.Group();
+    cityPivot.add(plateauTilesRenderer.group);
+    scene.add(cityPivot);
 
-  const wallWest = new THREE.Mesh(new THREE.BoxGeometry(2, 20, 140), wallMat);
-  wallWest.position.set(-70, 10, 0);
-  scene.add(wallWest);
-  obstacles.push(wallWest);
+    let aligned = false;
+    plateauTilesRenderer.addEventListener('load-model', ({ scene: tileScene }) => {
+      if (!aligned) {
+        const sphere = new THREE.Sphere();
+        if (plateauTilesRenderer.getBoundingSphere(sphere)) {
+          aligned = true;
+          const center = sphere.center.clone();
+          const up = center.clone().normalize();
+          const q = new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
+          cityPivot.quaternion.copy(q);
+          const rotatedCenter = center.clone().applyQuaternion(q);
+          cityPivot.position.set(-rotatedCenter.x, -rotatedCenter.y + 6, -rotatedCenter.z);
+        }
+      }
 
-  const wallEast = new THREE.Mesh(new THREE.BoxGeometry(2, 20, 140), wallMat);
-  wallEast.position.set(70, 10, 0);
-  scene.add(wallEast);
-  obstacles.push(wallEast);
+      cityPivot.updateMatrixWorld(true);
+      tileScene.traverse(obj => {
+        if (obj.isMesh) {
+          obj.castShadow = true;
+          obj.receiveShadow = true;
+          if (!obj.material) {
+            obj.material = new THREE.MeshStandardMaterial({ color: 0xdcdde1 });
+          }
+          const bBox = new THREE.Box3().setFromObject(obj);
+          if (Math.abs(bBox.min.x) < 68 && Math.abs(bBox.min.z) < 68 && bBox.max.y > 0.5) {
+            bBox.min.y = 0;
+            obstacleBoxes.push(bBox);
+          }
+        }
+      });
+    });
+    return;
+  }
 
-
-  // ステージ別の遮蔽物配置
+  // 通常ステージの障害物生成
   const count = type === 'bigroom' ? 14 : 24;
   for (let i = 0; i < count; i++) {
     let w = 4 + Math.random() * 6;
@@ -418,45 +649,109 @@ function buildStage(type) {
     let d = 4 + Math.random() * 6;
     let color = 0x8b5a2b;
 
-    if (type === 'wasteland') { h = 2 + Math.random() * 4; color = 0xa87e58; } // 荒野の岩
-    if (type === 'city')      { h = 8 + Math.random() * 14; color = 0x546e7a; } // 街中のビル
-    if (type === 'ruins')     { h = 2 + Math.random() * 6; color = 0x6d4c41; } // ボロ街の廃墟壁
-    if (type === 'bigroom')   { w = 9; h = 3.5; d = 2.5; color = 0xd4a359; }   // 大きい部屋の座卓・衝立
+    if (type === 'wasteland') { h = 2 + Math.random() * 4; color = 0xa87e58; }
+    if (type === 'city')      { h = 8 + Math.random() * 14; color = 0x546e7a; }
+    if (type === 'ruins')     { h = 2 + Math.random() * 6; color = 0x6d4c41; }
+    if (type === 'bigroom')   { w = 9; h = 3.5; d = 2.5; color = 0xd4a359; }
 
     const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color }));
     let x = (Math.random() - 0.5) * 110;
     let z = (Math.random() - 0.5) * 110;
-    if (Math.abs(z) > 45) z *= 0.45; // リスポーン地点付近は開ける
+    if (Math.abs(z) > 45) z *= 0.45;
     box.position.set(x, h / 2, z);
     box.castShadow = true;
     box.receiveShadow = true;
     scene.add(box);
     obstacles.push(box);
+    obstacleBoxes.push(new THREE.Box3().setFromObject(box));
   }
 }
+// ==========================================
+// 4. キャラクター（将棋駒漢字テクスチャ＆FBX銃・キャラモデル対応）生成
+// ==========================================
+const SHOGI_KANJI = ['王', '飛', '角', '金', '銀', '桂', '香', '歩'];
 
-// ==========================================
-// 4. キャラクター（プレイヤー・CPU・オンライン相手）生成
-// ==========================================
+function createShogiTexture(kanji) {
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 192;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f4d086';
+  ctx.fillRect(0, 0, 128, 192);
+  ctx.strokeStyle = '#8d5524';
+  ctx.lineWidth = 8;
+  ctx.strokeRect(6, 6, 116, 180);
+  ctx.fillStyle = '#1a1105';
+  ctx.font = 'bold 88px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(kanji, 64, 102);
+  return new THREE.CanvasTexture(c);
+}
+
 const entities = [];
 const bullets = [];
 let scores = { shogi: 0, igo: 0 };
-let gameTime = 180; // 3分間（180秒）
+let gameTime = 180;
 let isPlaying = false;
 let localPlayer = null;
+let timerInterval = null;
 
 function createFighter(team, isPlayer, aiLevel = 'normal', isRemote = false) {
   const group = new THREE.Group();
 
-  // 本体（将棋は木駒シルエット、囲碁は立体碁石シルエット・当たり判定は完全同一）
-  const bodyGeo = team === 'shogi'
-    ? new THREE.BoxGeometry(1.4, 2.4, 0.7)
-    : new THREE.CylinderGeometry(1.0, 1.0, 2.2, 24);
-  const bodyMat = new THREE.MeshStandardMaterial({ color: team === 'shogi' ? 0xf4d086 : 0x222222 });
-  const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-  bodyMesh.position.y = 1.2;
-  bodyMesh.castShadow = true;
+  let bodyMesh;
+  let mixer = null;
+  let animAction = null;
+  const bones = {};
+
+  // models/man.fbx が読み込まれていれば人型3Dモデルを使用（骨格クローン対応）
+  if (loadedFBXAssets.man) {
+    bodyMesh = cloneSkinnedFBX(loadedFBXAssets.man);
+    bodyMesh.traverse(child => {
+      if (child.isBone) {
+        const n = child.name.toLowerCase();
+        if (n.includes('leftarm') || (n.includes('upperarm') && n.includes('l'))) bones.leftArm = child;
+        if (n.includes('rightarm') || (n.includes('upperarm') && n.includes('r'))) bones.rightArm = child;
+        if (n.includes('leftforearm') || (n.includes('lowerarm') && n.includes('l'))) bones.leftForeArm = child;
+        if (n.includes('rightforearm') || (n.includes('lowerarm') && n.includes('r'))) bones.rightForeArm = child;
+        if (n.includes('leftupleg') || (n.includes('thigh') && n.includes('l'))) bones.leftUpLeg = child;
+        if (n.includes('rightupleg') || (n.includes('thigh') && n.includes('r'))) bones.rightUpLeg = child;
+        if (n.includes('leftleg') || (n.includes('calf') && n.includes('l'))) bones.leftLeg = child;
+        if (n.includes('rightleg') || (n.includes('calf') && n.includes('r'))) bones.rightLeg = child;
+        if (n.includes('spine')) bones.spine = child;
+      }
+    });
+
+    // 内蔵アニメーションが含まれていれば再生準備
+    if (window.manFBXAnimations && window.manFBXAnimations.length > 0) {
+      mixer = new THREE.AnimationMixer(bodyMesh);
+      animAction = mixer.clipAction(window.manFBXAnimations);
+      animAction.play();
+    }
+  } else if (team === 'shogi') {
+
+    const kanji = isPlayer ? '王' : SHOGI_KANJI[Math.floor(Math.random() * SHOGI_KANJI.length)];
+    const faceTex = createShogiTexture(kanji);
+    const sideMat = new THREE.MeshStandardMaterial({ color: 0xdba958 });
+    const faceMat = new THREE.MeshStandardMaterial({ map: faceTex });
+    const materials = [sideMat, sideMat, sideMat, sideMat, faceMat, faceMat];
+    bodyMesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 2.4, 0.7), materials);
+    bodyMesh.position.y = 1.2;
+    bodyMesh.castShadow = true;
+  } else {
+    const bodyGeo = new THREE.CylinderGeometry(1.0, 1.0, 2.2, 24);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.25 });
+    bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+    bodyMesh.position.y = 1.2;
+    bodyMesh.castShadow = true;
+  }
   group.add(bodyMesh);
+
+  // 右手に持つ3D銃グループ
+  const gunGroup = new THREE.Group();
+  gunGroup.position.set(0.85, 1.35, -0.5);
+  group.add(gunGroup);
 
   // 盾（将棋盤 / 囲碁盤）
   const shieldGeo = new THREE.BoxGeometry(2.3, 2.3, 0.25);
@@ -472,11 +767,12 @@ function createFighter(team, isPlayer, aiLevel = 'normal', isRemote = false) {
   scene.add(group);
 
   const fighter = {
-    team, isPlayer, aiLevel, isRemote, group, bodyMesh, shieldMesh,
+    team, isPlayer, aiLevel, isRemote, group, bodyMesh, shieldMesh, gunGroup,
+    mixer, animAction, bones, walkPhase: 0, prevPos: new THREE.Vector3(),
     hp: 100, maxHp: 100,
     shieldHp: 100, maxShieldHp: 100,
     isGuarding: false,
-    stunTimer: 0, // ガードブレイク（体勢崩し）硬直時間
+    stunTimer: 0,
     weaponIdx: 0,
     ammo: WEAPONS.map(w => w.mag),
     reloading: false,
@@ -490,9 +786,29 @@ function createFighter(team, isPlayer, aiLevel = 'normal', isRemote = false) {
     aiTimer: 0
   };
 
+  updateFighterGunModel(fighter);
   respawnFighter(fighter);
   entities.push(fighter);
   return fighter;
+}
+
+function updateFighterGunModel(f) {
+  const w = WEAPONS[f.weaponIdx];
+  if (!f.gunGroup || !w) return;
+  while (f.gunGroup.children.length > 0) {
+    f.gunGroup.remove(f.gunGroup.children[0]);
+  }
+  // models/*.fbx が読み込まれていれば本物のFBX銃器モデルを装着、なければ標準3D銃を生成
+  if (loadedFBXAssets[w.id]) {
+    const clonedGun = loadedFBXAssets[w.id].clone();
+    f.gunGroup.add(clonedGun);
+  } else {
+    const fallbackGun = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.28, w.barrelLen),
+      new THREE.MeshStandardMaterial({ color: w.gunColor })
+    );
+    f.gunGroup.add(fallbackGun);
+  }
 }
 
 function respawnFighter(f) {
@@ -523,10 +839,8 @@ function shootWeapon(f, fromNetwork = false) {
   const now = performance.now();
   const w = WEAPONS[f.weaponIdx];
 
-  // 盾で防いでいる間・体勢崩しスタン中・リロード中は撃てない
   if (f.isGuarding || f.stunTimer > 0 || f.reloading) return;
 
-  // マガジン消費しきったら射撃ボタンで自動リロード
   if (f.ammo[f.weaponIdx] <= 0) {
     triggerReload(f);
     return;
@@ -537,14 +851,34 @@ function shootWeapon(f, fromNetwork = false) {
   f.ammo[f.weaponIdx]--;
 
   if (f.isPlayer) {
+    playGunSound(w.id);
     broadcastData({ type: 'shoot' });
   }
 
-  const dir = new THREE.Vector3(
+  const muzzlePos = f.group.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+  let dir = new THREE.Vector3(
     -Math.sin(f.yaw) * Math.cos(f.pitch),
     Math.sin(f.pitch),
     -Math.cos(f.yaw) * Math.cos(f.pitch)
   ).normalize();
+
+  // プレイヤー本人の場合はカメラ中央（クロスヘア）からレイキャストを飛ばして着弾点を正確に狙う
+  if (f.isPlayer) {
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const targetPoint = raycaster.ray.origin.clone().addScaledVector(raycaster.ray.direction, 120);
+
+    // 障害物や敵キャラにレイが当たっていれば、その地点を正確な狙い点にする
+    const aimTargets = [...obstacles];
+    entities.forEach(other => {
+      if (other !== f && other.bodyMesh) aimTargets.push(other.bodyMesh);
+    });
+    const hits = raycaster.intersectObjects(aimTargets, true);
+    if (hits.length > 0 && hits[0].distance > 2.5) {
+      targetPoint.copy(hits[0].point);
+    }
+    dir = targetPoint.sub(muzzlePos).normalize();
+  }
 
   for (let i = 0; i < w.pellets; i++) {
     const bulletDir = dir.clone();
@@ -558,7 +892,7 @@ function shootWeapon(f, fromNetwork = false) {
       : new THREE.SphereGeometry(0.25, 8, 8);
     const bMat = new THREE.MeshBasicMaterial({ color: f.team === 'shogi' ? 0xffd54f : 0x00e5ff });
     const bMesh = new THREE.Mesh(bGeo, bMat);
-    bMesh.position.copy(f.group.position).add(new THREE.Vector3(0, 1.5, 0)).addScaledVector(bulletDir, 1.5);
+    bMesh.position.copy(f.group.position).add(new THREE.Vector3(0, 1.5, 0)).addScaledVector(bulletDir, 1.6);
     scene.add(bMesh);
 
     bullets.push({
@@ -572,7 +906,6 @@ function shootWeapon(f, fromNetwork = false) {
     });
   }
 
-  // 弾を撃ち切ったら自動でリロード開始
   if (f.ammo[f.weaponIdx] <= 0) {
     triggerReload(f);
   }
@@ -596,9 +929,10 @@ window.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (!localPlayer || !isPlaying) return;
   if (e.code.startsWith('Digit')) {
-    const idx = parseInt(e.code.replace('Digit', '')) - 1;
+    const idx = parseInt(e.code.replace('Digit', ''), 10) - 1;
     if (idx >= 0 && idx < WEAPONS.length && !localPlayer.reloading) {
       localPlayer.weaponIdx = idx;
+      updateFighterGunModel(localPlayer);
       updateSlotUI();
     }
   }
@@ -635,8 +969,48 @@ function updateSlotUI() {
 }
 
 // ==========================================
-// 7. バトル開始・タイマー・メインループ
+// 7. バトル開始・タイマー・障害物当たり判定
 // ==========================================
+function resolveObstacleCollision(f, radius = 1.1) {
+  const pos = f.group.position;
+  let groundHeight = 0;
+
+  for (const box of obstacleBoxes) {
+    // すでに障害物の上面より高い位置にいる場合は、乗れる床の高さ候補として記録
+    if (pos.y >= box.max.y - 0.35) {
+      if (pos.x >= box.min.x - 0.6 && pos.x <= box.max.x + 0.6 &&
+          pos.z >= box.min.z - 0.6 && pos.z <= box.max.z + 0.6) {
+        if (box.max.y > groundHeight) {
+          groundHeight = box.max.y;
+        }
+      }
+      continue;
+    }
+
+    // 障害物の側面とぶつかっている場合は横方向へ押し出す
+    const closestX = Math.max(box.min.x, Math.min(pos.x, box.max.x));
+    const closestZ = Math.max(box.min.z, Math.min(pos.z, box.max.z));
+    const dx = pos.x - closestX;
+    const dz = pos.z - closestZ;
+    const distSq = dx * dx + dz * dz;
+    if (distSq < radius * radius) {
+      const dist = Math.sqrt(distSq) || 0.001;
+      const push = radius - dist;
+      pos.x += (dx / dist) * push;
+      pos.z += (dz / dist) * push;
+    }
+  }
+
+  // 足元の床（地面または屋上）への着地判定
+  if (pos.y <= groundHeight && f.vy <= 0) {
+    pos.y = groundHeight;
+    f.vy = 0;
+    f.isGrounded = true;
+  } else if (pos.y > groundHeight + 0.05) {
+    f.isGrounded = false;
+  }
+}
+
 function startGame() {
   const team = document.getElementById('sel-team').value;
   const mode = document.getElementById('sel-mode').value;
@@ -649,35 +1023,33 @@ function startGame() {
 
   buildStage(stage);
 
-  // プレイヤー本人の生成
   localPlayer = createFighter(team, true, aiLevel, false);
 
   const enemyTeam = team === 'shogi' ? 'igo' : 'shogi';
 
   if (mode === 'online') {
-    // オンライン接続済みプレイヤー以外の枠をCPUで補充（相手不在時は1v1 CPU補充）
     const connectedCount = Object.keys(connections).length;
     if (connectedCount === 0) {
       createFighter(enemyTeam, false, aiLevel, false);
     }
   } else {
-    // 1v1 / 3v3 / 5v5 CPU戦の生成
-    const teamSize = parseInt(mode);
+    const teamSize = parseInt(mode, 10);
     for (let i = 1; i < teamSize; i++) createFighter(team, false, aiLevel, false);
     for (let i = 0; i < teamSize; i++) createFighter(enemyTeam, false, aiLevel, false);
   }
 
   isPlaying = true;
 
-  // 制限時間タイマー（3分間）
-  setInterval(() => {
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
     if (!isPlaying) return;
     gameTime--;
     const m = String(Math.floor(gameTime / 60)).padStart(2, '0');
     const s = String(gameTime % 60).padStart(2, '0');
-    document.getElementById('timer').innerText = `m:{s}`;
+    document.getElementById('timer').innerText = m + ':' + s;
     if (gameTime <= 0) {
       isPlaying = false;
+      clearInterval(timerInterval);
       document.exitPointerLock();
       const res = scores.shogi > scores.igo ? "将棋陣営の勝利！" : (scores.igo > scores.shogi ? "囲碁陣営の勝利！" : "引き分け！");
       alert(`タイムアップ！\n将棋: ${scores.shogi}キル vs 囲碁: ${scores.igo}キル\n結果: ${res}`);
@@ -688,25 +1060,110 @@ function startGame() {
   animate();
 }
 
+// SkinnedMesh（骨格付き3Dモデル）を複数体安全に複製する関数
+function cloneSkinnedFBX(source) {
+  const clone = source.clone();
+  const sourceBones = [];
+  const cloneBones = [];
+  source.traverse(n => { if (n.isBone) sourceBones.push(n); });
+  clone.traverse(n => { if (n.isBone) cloneBones.push(n); });
+
+  clone.traverse(node => {
+    if (node.isSkinnedMesh) {
+      const orderedBones = node.skeleton.bones.map(b => {
+        const idx = sourceBones.indexOf(b);
+        return idx >= 0 ? cloneBones[idx] : b;
+      });
+      node.skeleton = new THREE.Skeleton(orderedBones, node.skeleton.boneInverses);
+      node.bind(node.skeleton, node.bindMatrix);
+    }
+  });
+  return clone;
+}
+
+// キャラクターの歩行・銃構え・ガード・ジャンプのアニメーション更新
+function updateFighterAnimation(f) {
+  const dx = f.group.position.x - f.prevPos.x;
+  const dz = f.group.position.z - f.prevPos.z;
+  const moveSpeed = Math.hypot(dx, dz);
+  f.prevPos.copy(f.group.position);
+
+  const isMoving = moveSpeed > 0.015;
+
+  // 1. FBX内蔵アニメーションがある場合
+  if (f.mixer && f.animAction) {
+    f.animAction.timeScale = isMoving ? Math.min(2.0, moveSpeed * 6.5) : 0.15;
+    f.mixer.update(0.016);
+    return;
+  }
+
+  // 2. ボーン（骨格）がある場合はTポーズを解除して銃構え＆ランニング動作を生成
+  const b = f.bones;
+  if (b && (b.leftArm || b.rightArm || b.leftUpLeg || b.rightUpLeg)) {
+    if (isMoving && f.isGrounded) {
+      f.walkPhase += moveSpeed * 1.4;
+    } else if (!f.isGrounded) {
+      f.walkPhase = 0.6;
+    } else {
+      f.walkPhase *= 0.85;
+    }
+
+    const swing = Math.sin(f.walkPhase) * (isMoving ? 0.65 : 0.04);
+
+    // 足の前後スイング（歩行・走行）
+    if (b.leftUpLeg)  b.leftUpLeg.rotation.x = swing;
+    if (b.rightUpLeg) b.rightUpLeg.rotation.x = -swing;
+    if (b.leftLeg)    b.leftLeg.rotation.x = Math.max(0, -swing * 0.9);
+    if (b.rightLeg)   b.rightLeg.rotation.x = Math.max(0, swing * 0.9);
+
+    // 腕のポーズ：Tポーズ（真横）から下ろして銃を構える
+    if (b.rightArm) {
+      b.rightArm.rotation.z = -1.15; // 右腕を下に降ろす
+      b.rightArm.rotation.x = -0.85 + f.pitch * 0.6; // 前方へ突き出して銃を構える
+    }
+    if (b.rightForeArm) {
+      b.rightForeArm.rotation.y = -0.35;
+    }
+    if (b.leftArm) {
+      b.leftArm.rotation.z = 1.15; // 左腕を下に降ろす
+      b.leftArm.rotation.x = f.isGuarding ? -1.1 : (-0.55 - swing * 0.25); // ガード時は盾を構え、通常時は銃に添える
+    }
+  } else if (f.bodyMesh) {
+    // ボーンがない駒・碁石ボディの場合も歩行の揺れとジャンプ伸縮を付ける
+    if (isMoving && f.isGrounded) {
+      f.walkPhase += moveSpeed * 1.6;
+      f.bodyMesh.position.y = 1.2 + Math.abs(Math.sin(f.walkPhase)) * 0.14;
+      f.bodyMesh.rotation.z = Math.cos(f.walkPhase) * 0.08;
+    } else {
+      f.bodyMesh.position.y = 1.2;
+      f.bodyMesh.rotation.z = 0;
+    }
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
   if (!isPlaying) return;
 
   const now = performance.now();
 
+  // PLATEAU 3D Tiles のカメラ視界に応じた建物タイル更新
+  if (plateauTilesRenderer) {
+    camera.updateMatrixWorld();
+    plateauTilesRenderer.update();
+  }
+
   entities.forEach(f => {
-    // リロード完了処理
     if (f.reloading && now >= f.reloadEnd) {
       f.ammo[f.weaponIdx] = WEAPONS[f.weaponIdx].mag;
       f.reloading = false;
     }
 
-    // 体勢崩し（ガードブレイク）硬直処理
     if (f.stunTimer > 0) {
       f.stunTimer--;
       f.isGuarding = false;
       f.shieldMesh.visible = false;
-      f.bodyMesh.rotation.z = 0.45; // よろけ演出
+      f.bodyMesh.rotation.z = 0.45;
       return;
     } else {
       f.bodyMesh.rotation.z = 0;
@@ -716,7 +1173,6 @@ function animate() {
     }
 
     if (f.isPlayer) {
-      // --- プレイヤー操作 ---
       f.isGuarding = mouseRightDown;
       f.shieldMesh.visible = f.isGuarding;
 
@@ -731,14 +1187,12 @@ function animate() {
 
       if (keys['Space'] && f.isGrounded) { f.vy = 0.42; f.isGrounded = false; }
 
-      // ARとSMGのみ長押し連射可能、それ以外は単発撃ち
       const w = WEAPONS[f.weaponIdx];
       if (w.auto ? mouseLeftDown : mouseLeftJustPressed) {
         shootWeapon(f);
       }
       mouseLeftJustPressed = false;
 
-      // オンライン同期送信
       broadcastData({
         type: 'state',
         team: f.team,
@@ -752,7 +1206,6 @@ function animate() {
       });
 
     } else if (!f.isRemote) {
-      // --- CPU AIロジック（弱・中・強） ---
       let nearest = null;
       let minDist = Infinity;
       entities.forEach(other => {
@@ -768,14 +1221,13 @@ function animate() {
         const aimLerp = f.aiLevel === 'weak' ? 0.03 : (f.aiLevel === 'normal' ? 0.08 : 0.22);
         f.yaw += (targetYaw - f.yaw) * aimLerp;
 
-        // 距離に応じた武器の自動持ち替え（強いAIのみ）
         if (f.aiLevel === 'strong' && Math.random() < 0.01) {
-          if (minDist > 45) f.weaponIdx = 1;      // 遠距離はスナイパー
-          else if (minDist < 15) f.weaponIdx = 2; // 近距離はショットガン
-          else f.weaponIdx = 0;                   // 中距離はアサルトライフル
+          if (minDist > 45) f.weaponIdx = 1;
+          else if (minDist < 15) f.weaponIdx = 2;
+          else f.weaponIdx = 0;
+          updateFighterGunModel(f);
         }
 
-        // 移動AI
         f.aiTimer--;
         if (f.aiTimer <= 0) {
           f.aiTimer = 35 + Math.random() * 55;
@@ -785,30 +1237,31 @@ function animate() {
         }
         f.group.position.addScaledVector(f.aiMoveDir, f.aiLevel === 'strong' ? 0.28 : 0.18);
 
-        // 盾防御AI
         if (f.aiLevel !== 'weak' && f.shieldHp > 40 && Math.random() < (f.aiLevel === 'strong' ? 0.025 : 0.008)) {
           f.isGuarding = true;
           setTimeout(() => { f.isGuarding = false; }, 1100);
         }
         f.shieldMesh.visible = f.isGuarding;
 
-        // 射撃AI
         if (!f.isGuarding && minDist < 80 && Math.random() < (f.aiLevel === 'weak' ? 0.05 : 0.16)) {
           shootWeapon(f);
         }
       }
     }
 
-    // 重力・着地・マップ端制限
+    // 重力・着地（屋上乗り対応）・遮蔽物押し出し・マップ端制限
     f.vy -= 0.02;
     f.group.position.y += f.vy;
-    if (f.group.position.y <= 0) { f.group.position.y = 0; f.vy = 0; f.isGrounded = true; }
+    resolveObstacleCollision(f, 1.1);
     f.group.position.x = Math.max(-66, Math.min(66, f.group.position.x));
     f.group.position.z = Math.max(-66, Math.min(66, f.group.position.z));
     f.group.rotation.y = f.yaw;
+    if (f.gunGroup) f.gunGroup.rotation.x = f.pitch;
+
+    // 🏃 キャラクターアニメーション更新（内蔵アニメ再生 ＋ Tポーズ解除＆歩行ボーン制御）
+    updateFighterAnimation(f);
   });
 
-  // TPSカメラ追従とHUD更新
   if (localPlayer) {
     const camOffset = new THREE.Vector3(0.8, 2.6, 5.2);
     camOffset.applyAxisAngle(new THREE.Vector3(1, 0, 0), localPlayer.pitch);
@@ -832,15 +1285,13 @@ function animate() {
       : `${localPlayer.ammo[localPlayer.weaponIdx]} / ${w.mag}`;
   }
 
-  // 弾丸の移動と当たり判定
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     b.mesh.position.add(b.vel);
     b.life--;
 
     let hit = false;
-    for (const obs of obstacles) {
-      const box = new THREE.Box3().setFromObject(obs);
+    for (const box of obstacleBoxes) {
       if (box.containsPoint(b.mesh.position)) { hit = true; break; }
     }
 
@@ -850,28 +1301,38 @@ function animate() {
         const targetCenter = target.group.position.clone().add(new THREE.Vector3(0, 1.2, 0));
         if (b.mesh.position.distanceTo(targetCenter) < 1.5) {
           hit = true;
+          if (b.owner.isPlayer) flashCrosshair();
 
-          if (target.isGuarding) {
-            // 盾で防いでいる場合：武器ごとの蓄積ダメージを加算
-            target.shieldHp -= b.shieldDmg;
-            if (target.shieldHp <= 0) {
-              // 規定発数に達して体勢崩し（ガードブレイク）発生！
-              target.shieldHp = 0;
-              target.isGuarding = false;
-              target.shieldMesh.visible = false;
-              target.stunTimer = 110; // 約1.8秒間行動不能
-              if (target.isPlayer) showMessage("体勢を崩された！！（ガードブレイク）", 1800);
-              if (b.owner.isPlayer) showMessage("相手の体勢を崩した！", 1200);
-            }
-          } else {
-            // 生身ヒット時のHPダメージ＆撃破リスポーン処理
-            target.hp -= b.dmg;
-            if (target.hp <= 0) {
-              scores[b.team]++;
-              document.getElementById(`score-${b.team}`).innerText = scores[b.team];
-              if (b.owner.isPlayer) showMessage("撃破！ +1 KILL", 1000);
-              if (target.isPlayer) showMessage("倒された！リスポーンします...", 1500);
-              respawnFighter(target);
+          // オンラインの人間プレイヤーに当てた場合は相手端末へヒット情報を送信
+          if (target.isRemote && b.owner.isPlayer) {
+            broadcastData({
+              type: 'hit',
+              dmg: b.dmg,
+              shieldDmg: b.shieldDmg,
+              attackerTeam: b.team
+            });
+          } else if (!target.isRemote) {
+            if (target.isGuarding) {
+              target.shieldHp -= b.shieldDmg;
+              if (b.owner.isPlayer || target.isPlayer) playGunSound('guard');
+              if (target.shieldHp <= 0) {
+                target.shieldHp = 0;
+                target.isGuarding = false;
+                target.shieldMesh.visible = false;
+                target.stunTimer = 110;
+                if (b.owner.isPlayer || target.isPlayer) playGunSound('break');
+                if (target.isPlayer) showMessage("体勢を崩された！！（ガードブレイク）", 1800);
+                if (b.owner.isPlayer) showMessage("相手の体勢を崩した！", 1200);
+              }
+            } else {
+              target.hp -= b.dmg;
+              if (target.hp <= 0) {
+                scores[b.team]++;
+                document.getElementById('score-' + b.team).innerText = scores[b.team];
+                if (b.owner.isPlayer) showMessage("撃破！ +1 KILL", 1000);
+                if (target.isPlayer) showMessage("倒された！リスポーンします...", 1500);
+                respawnFighter(target);
+              }
             }
           }
           break;
@@ -896,5 +1357,8 @@ window.addEventListener('resize', () => {
 </script>
 </body>
 </html>
+
+
+
 
 
